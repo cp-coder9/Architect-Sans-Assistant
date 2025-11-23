@@ -1,7 +1,7 @@
 
 import React, { useRef, useState, forwardRef, useImperativeHandle, useEffect } from 'react';
 import { PlanData, ToolType, Point, Wall, Opening, RoomLabel, Dimension, LayerConfig, Stair, StairType, SymbolInstance } from '../types';
-import { X, Settings2, Scissors, Lock, Unlock, RotateCw, FlipHorizontal, Group, Ungroup, Armchair } from 'lucide-react';
+import { X, Settings2, Scissors, Lock, Unlock, RotateCw, FlipHorizontal, Group, Ungroup, Trash2, Maximize2, Move } from 'lucide-react';
 import { dist, sub, add, scale, norm, dot } from '../utils/geometry';
 import { getSnapPoint, SnapGuide, GRID_SIZE } from '../utils/snapping';
 import { WallEntity, OpeningEntity, StairEntity, DimensionEntity, LabelEntity, NorthArrowEntity, SymbolEntity, SYMBOL_CATALOG } from './CanvasEntities';
@@ -46,7 +46,8 @@ interface DragState {
 interface ContextMenuState {
     x: number;
     y: number;
-    wallId: string;
+    targetId: string;
+    targetType: 'wall' | 'opening' | 'symbol' | 'stair' | 'other';
     worldPos: Point;
 }
 
@@ -379,6 +380,8 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                 area: 0
             };
             onUpdate({ ...data, labels: [...data.labels, newLabel] });
+            setSelection(new Set([newLabel.id]));
+            onToolChange(ToolType.SELECT);
         } else if (tool === ToolType.STAIR) {
             const newStair: Stair = {
                 id: crypto.randomUUID(),
@@ -404,7 +407,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
             };
             onUpdate({ ...data, symbols: [...data.symbols, newSymbol] });
             setSelection(new Set([newSymbol.id]));
-            // Do not switch tool, allow multiple placements
+            onToolChange(ToolType.SELECT);
         } else if (tool === ToolType.DOOR || tool === ToolType.WINDOW) {
             let nearestWall: Wall | null = null;
             let minDist = Infinity;
@@ -460,6 +463,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                 };
                 onUpdate({ ...data, openings: [...data.openings, newOpening] });
                 setSelection(new Set([newOpening.id]));
+                onToolChange(ToolType.SELECT);
             }
         }
     }
@@ -468,46 +472,108 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
   const handleContextMenu = (e: React.MouseEvent) => {
       e.preventDefault();
       const worldPos = toWorld(e.clientX, e.clientY);
-      const hitWall = data.walls.find(w => {
-          const l2 = dist(w.start, w.end)**2;
-          if (l2 === 0) return false;
-          let t = dot(sub(worldPos, w.start), sub(w.end, w.start)) / l2;
-          t = Math.max(0, Math.min(1, t));
-          const proj = add(w.start, scale(sub(w.end, w.start), t));
-          return dist(worldPos, proj) < (w.thickness/2 + 100) / 10;
-      });
+      let targetId = '';
+      let targetType: ContextMenuState['targetType'] = 'other';
+      
+      // Hit Test Order: Opening -> Symbol -> Stair -> Wall
+      
+      if (!targetId) {
+          for (const op of data.openings) {
+            const wall = data.walls.find(w => w.id === op.wallId);
+            if (!wall) continue;
+            const opPos = add(wall.start, scale(sub(wall.end, wall.start), op.t));
+            if (dist(worldPos, opPos) < Math.max(op.width/2, 200)/10 ) {
+                targetId = op.id;
+                targetType = 'opening';
+                break;
+            }
+          }
+      }
 
-      if (hitWall) {
-          setContextMenu({ x: e.clientX, y: e.clientY, wallId: hitWall.id, worldPos: worldPos });
+      if (!targetId) {
+          const symbol = data.symbols.find(s => {
+             const def = SYMBOL_CATALOG.find(def => def.id === s.type);
+             const rad = def ? Math.max(def.width, def.height) * 0.1 * s.scale / 2 : 50;
+             return dist(s.position, worldPos) < rad;
+          });
+          if (symbol) { targetId = symbol.id; targetType = 'symbol'; }
+      }
+
+      if (!targetId) {
+          const stair = data.stairs.find(s => dist(s.position, worldPos) < Math.max(s.width, 100));
+          if (stair) { targetId = stair.id; targetType = 'stair'; }
+      }
+
+      if (!targetId) {
+          const hitWall = data.walls.find(w => {
+              const l2 = dist(w.start, w.end)**2;
+              if (l2 === 0) return false;
+              let t = dot(sub(worldPos, w.start), sub(w.end, w.start)) / l2;
+              t = Math.max(0, Math.min(1, t));
+              const proj = add(w.start, scale(sub(w.end, w.start), t));
+              return dist(worldPos, proj) < (w.thickness/2 + 100) / 10;
+          });
+          if (hitWall) { targetId = hitWall.id; targetType = 'wall'; }
+      }
+
+      if (targetId) {
+          setSelection(new Set([targetId]));
+          setContextMenu({ x: e.clientX, y: e.clientY, targetId, targetType, worldPos });
       }
   };
 
-  const handleSplitWall = () => {
+  const handleContextAction = (action: 'split' | 'delete' | 'flipX' | 'flipY' | 'rotateCW') => {
       if (!contextMenu) return;
-      const wall = data.walls.find(w => w.id === contextMenu.wallId);
-      if (!wall || wall.locked) return; 
+      const { targetId, targetType, worldPos } = contextMenu;
 
-      const l2 = dist(wall.start, wall.end)**2;
-      let t = dot(sub(contextMenu.worldPos, wall.start), sub(wall.end, wall.start)) / l2;
-      t = Math.max(0.01, Math.min(0.99, t)); 
+      if (action === 'delete') {
+          deleteSelected();
+          setContextMenu(null);
+          return;
+      }
 
-      const splitPoint = add(wall.start, scale(sub(wall.end, wall.start), t));
-      const id1 = crypto.randomUUID();
-      const id2 = crypto.randomUUID();
+      if (targetType === 'wall' && action === 'split') {
+        const wall = data.walls.find(w => w.id === targetId);
+        if (!wall || wall.locked) return; 
 
-      const wall1: Wall = { ...wall, id: id1, end: splitPoint };
-      const wall2: Wall = { ...wall, id: id2, start: splitPoint };
+        const l2 = dist(wall.start, wall.end)**2;
+        let t = dot(sub(worldPos, wall.start), sub(wall.end, wall.start)) / l2;
+        t = Math.max(0.01, Math.min(0.99, t)); 
 
-      const newOpenings = data.openings.map(op => {
-          if (op.wallId !== wall.id) return op;
-          if (op.t < t) { return { ...op, wallId: id1, t: op.t / t }; } 
-          else { return { ...op, wallId: id2, t: (op.t - t) / (1 - t) }; }
-      });
+        const splitPoint = add(wall.start, scale(sub(wall.end, wall.start), t));
+        const id1 = crypto.randomUUID();
+        const id2 = crypto.randomUUID();
 
-      const newWalls = data.walls.filter(w => w.id !== wall.id).concat([wall1, wall2]);
-      onUpdate({ ...data, walls: newWalls, openings: newOpenings });
+        const wall1: Wall = { ...wall, id: id1, end: splitPoint };
+        const wall2: Wall = { ...wall, id: id2, start: splitPoint };
+
+        const newOpenings = data.openings.map(op => {
+            if (op.wallId !== wall.id) return op;
+            if (op.t < t) { return { ...op, wallId: id1, t: op.t / t }; } 
+            else { return { ...op, wallId: id2, t: (op.t - t) / (1 - t) }; }
+        });
+
+        const newWalls = data.walls.filter(w => w.id !== wall.id).concat([wall1, wall2]);
+        onUpdate({ ...data, walls: newWalls, openings: newOpenings });
+      } 
+      else if (targetType === 'opening') {
+          if (action === 'flipX') {
+              const newOps = data.openings.map(o => o.id === targetId ? { ...o, flipX: !o.flipX } : o);
+              onUpdate({ ...data, openings: newOps });
+          } else if (action === 'flipY') {
+              const newOps = data.openings.map(o => o.id === targetId ? { ...o, flipY: !o.flipY } : o);
+              onUpdate({ ...data, openings: newOps });
+          }
+      }
+      else if (targetType === 'symbol' || targetType === 'stair') {
+           if (action === 'rotateCW') {
+               const newSymbols = data.symbols.map(s => s.id === targetId ? { ...s, rotation: (s.rotation + 45) % 360 } : s);
+               const newStairs = data.stairs.map(s => s.id === targetId ? { ...s, rotation: (s.rotation + 45) % 360 } : s);
+               onUpdate({ ...data, symbols: newSymbols, stairs: newStairs });
+           }
+      }
+
       setContextMenu(null);
-      setSelection(new Set());
   };
 
   const handleGroupSelection = () => {
@@ -719,6 +785,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
               onUpdate({ ...data, walls: [...data.walls, w1, w2, w3, w4], labels: [...data.labels, label] });
               const newSel = new Set([w1.id, w2.id, w3.id, w4.id, label.id]);
               setSelection(newSel);
+              onToolChange(ToolType.SELECT);
           }
 
       } else if (tool === ToolType.DIMENSION) {
@@ -730,6 +797,8 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                 offset: 30
             };
             onUpdate({ ...data, dimensions: [...data.dimensions, newDim] });
+            setSelection(new Set([newDim.id]));
+            onToolChange(ToolType.SELECT);
          }
       }
       setDrawingStart(null);
@@ -775,7 +844,16 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
       const wall = data.walls.find(w => w.id === selectedId);
       if (wall) {
           if (wall.locked && key !== 'locked') return;
-          onUpdate({...data, walls: data.walls.map(w => w.id === selectedId ? { ...w, [key]: value } : w)});
+          
+          let finalValue = value;
+          // Validate thickness updates to ensure valid numbers
+          if (key === 'thickness') {
+              const num = parseFloat(value);
+              if (isNaN(num) || num <= 0) return;
+              finalValue = num;
+          }
+
+          onUpdate({...data, walls: data.walls.map(w => w.id === selectedId ? { ...w, [key]: finalValue } : w)});
           return;
       }
       const op = data.openings.find(o => o.id === selectedId);
@@ -843,10 +921,51 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
       return false;
   });
 
+  // Calculate Square Room Area for Display
+  const getRectArea = () => {
+      if (tool !== ToolType.SQUARE_ROOM || !drawingStart || !currentMousePos) return null;
+      const w = Math.abs(currentMousePos.x - drawingStart.x) * 10;
+      const h = Math.abs(currentMousePos.y - drawingStart.y) * 10;
+      return (w * h) / 1000000;
+  };
+
+  // Quick Action Popup Logic
+  const renderQuickActions = () => {
+      if (selection.size !== 1 || dragState) return null;
+      const selectedId = Array.from(selection)[0];
+      const obj = getSelectedObject();
+      if (!obj) return null;
+      
+      let pos = { x: 0, y: 0 };
+      if ('position' in obj) { pos = worldToScreen(obj.position); }
+      else if ('start' in obj && 'end' in obj) { pos = worldToScreen({ x: (obj.start.x+obj.end.x)/2, y: (obj.start.y+obj.end.y)/2 }); }
+      else if ('wallId' in obj) {
+          const wall = data.walls.find(w => w.id === (obj as Opening).wallId);
+          if (wall) pos = worldToScreen(add(wall.start, scale(sub(wall.end, wall.start), (obj as Opening).t)));
+      }
+
+      if (!pos.x && !pos.y) return null;
+      
+      return (
+          <div className="absolute flex gap-1 bg-white dark:bg-slate-800 p-1 rounded-full shadow-lg border border-slate-200 dark:border-slate-700 z-40 transform -translate-x-1/2 -translate-y-[60px]" style={{ left: pos.x, top: pos.y }}>
+              {'type' in obj && (obj as any).type === 'door' && (
+                  <>
+                    <button onClick={() => updateSelectedProperty('flipX', !(obj as Opening).flipX)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-600 dark:text-slate-300" title="Flip Hinge"><FlipHorizontal size={14} /></button>
+                    <button onClick={() => updateSelectedProperty('flipY', !(obj as Opening).flipY)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-600 dark:text-slate-300" title="Flip Swing"><RotateCw size={14} /></button>
+                  </>
+              )}
+              {('rotation' in obj) && (
+                  <button onClick={() => updateSelectedProperty('rotation', ((obj as any).rotation + 45) % 360)} className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-600 dark:text-slate-300" title="Rotate +45°"><RotateCw size={14} /></button>
+              )}
+              <button onClick={deleteSelected} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full text-red-500" title="Delete"><Trash2 size={14} /></button>
+          </div>
+      );
+  };
+
   const renderSmartDimensions = (wall: Wall) => {
       if (!layers.showDimensions) return null;
       if (Math.abs(wall.curvature || 0) > 1) return null; 
-      if (wall.locked) return null; 
+      // if (wall.locked) return null; // We might want to see them even if locked
 
       const openings = data.openings.filter(o => o.wallId === wall.id).sort((a, b) => a.t - b.t);
       if (openings.length === 0) return null;
@@ -922,13 +1041,24 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                       rotation += 180;
                   }
 
-                  const canEdit = !(wall.locked || (pt.refOp && pt.refOp.locked));
+                  const lockedOp = pt.refOp?.locked;
+                  // If it's a gap, check if adjacent openings are locked? For now, simplify: if wall is locked, all locked.
+                  const isLocked = wall.locked || lockedOp;
 
                   return (
-                    <g key={idx} className={`${canEdit ? 'pointer-events-auto cursor-pointer' : 'opacity-70'}`} onClick={(e) => {
+                    <g key={idx} className="pointer-events-auto cursor-pointer group" onClick={(e) => {
                          e.stopPropagation();
-                         if (!canEdit) return;
-                         if (!pt.refOp && pt.type === 'gap') return;
+                         
+                         if (isLocked) {
+                             if(window.confirm("This dimension is locked. Unlock to edit?")) {
+                                 if (wall.locked) onUpdate({ ...data, walls: data.walls.map(w => w.id === wall.id ? { ...w, locked: false } : w)});
+                                 else if (pt.refOp) onUpdate({ ...data, openings: data.openings.map(o => o.id === pt.refOp!.id ? { ...o, locked: false } : o)});
+                             }
+                             return;
+                         }
+
+                         if (!pt.refOp && pt.type === 'gap') return; // Can't edit generic gaps yet without advanced solver
+                         
                          const screenPos = worldToScreen(labelPos);
                          setEditInput({
                              x: screenPos.x,
@@ -937,17 +1067,33 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                              onSave: (val) => {
                                  const newVal = parseFloat(val);
                                  if (isNaN(newVal) || newVal <= 0) return;
+                                 
                                  if (pt.type === 'width' && pt.refOp) {
-                                     onUpdate({...data, openings: data.openings.map(o => o.id === pt.refOp!.id ? {...o, width: newVal} : o)});
+                                     // Check limits
+                                     const maxPossible = wallLen * 10;
+                                     if (newVal > maxPossible) {
+                                         alert(`Dimension out of range. Max width is ${Math.round(maxPossible)}mm`);
+                                         return;
+                                     }
+
+                                     onUpdate({
+                                         ...data, 
+                                         openings: data.openings.map(o => o.id === pt.refOp!.id ? {...o, width: newVal, locked: true} : o)
+                                     });
                                  } else if (pt.type === 'gap' && pt.refOp) {
+                                      // Move the opening
                                       const delta = (newVal - pt.val) / 10; 
-                                      onUpdate({...data, openings: data.openings.map(o => o.id === pt.refOp!.id ? { ...o, t: Math.max(0, Math.min(1, o.t + delta / wallLen)) } : o)});
+                                      const newT = Math.max(0, Math.min(1, pt.refOp.t + delta / wallLen));
+                                      onUpdate({
+                                          ...data, 
+                                          openings: data.openings.map(o => o.id === pt.refOp!.id ? { ...o, t: newT, locked: true } : o)
+                                      });
                                  }
                              }
                          });
                     }}>
-                        <text x={labelPos.x} y={labelPos.y} textAnchor="middle" alignmentBaseline="middle" transform={`rotate(${rotation}, ${labelPos.x}, ${labelPos.y})`} className="text-[10px] fill-slate-600 dark:fill-slate-400 font-mono hover:fill-blue-600 dark:hover:fill-blue-400 select-none" style={{fontSize: '10px'}}>
-                            {Math.round(pt.val)}
+                        <text x={labelPos.x} y={labelPos.y} textAnchor="middle" alignmentBaseline="middle" transform={`rotate(${rotation}, ${labelPos.x}, ${labelPos.y})`} className={`text-[10px] font-mono hover:fill-blue-600 dark:hover:fill-blue-400 select-none ${isLocked ? 'fill-red-500' : 'fill-slate-600 dark:fill-slate-400'}`} style={{fontSize: '10px'}}>
+                            {Math.round(pt.val)} {isLocked ? '🔒' : ''}
                         </text>
                     </g>
                   );
@@ -971,16 +1117,37 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
           </div>
       )}
 
+      {renderQuickActions()}
+
       {contextMenu && (
           <div className="absolute z-50 bg-white dark:bg-slate-800 shadow-lg border border-slate-200 dark:border-slate-700 rounded p-1 min-w-[120px]" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseLeave={() => setContextMenu(null)}>
-              <button onClick={handleSplitWall} className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2">
-                  <Scissors size={14} /> Split Wall
+              {contextMenu.targetType === 'wall' && (
+                  <button onClick={() => handleContextAction('split')} className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2">
+                      <Scissors size={14} /> Split Wall
+                  </button>
+              )}
+              {contextMenu.targetType === 'opening' && (
+                  <>
+                      <button onClick={() => handleContextAction('flipX')} className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"><FlipHorizontal size={14} /> Flip Hinge</button>
+                      <button onClick={() => handleContextAction('flipY')} className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"><RotateCw size={14} /> Flip Swing</button>
+                  </>
+              )}
+              {(contextMenu.targetType === 'symbol' || contextMenu.targetType === 'stair') && (
+                  <button onClick={() => handleContextAction('rotateCW')} className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"><RotateCw size={14} /> Rotate 45°</button>
+              )}
+              
+              <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
+              <button onClick={() => handleContextAction('delete')} className="w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                  <Trash2 size={14} /> Delete
               </button>
           </div>
       )}
 
       {summary && (
-          <div className="absolute bottom-28 right-4 z-30 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 p-4 w-64 animate-in slide-in-from-bottom-10 fade-in duration-200 max-h-[50vh] overflow-y-auto">
+          <div 
+            className="absolute bottom-28 right-4 z-30 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 p-4 w-64 animate-in slide-in-from-bottom-10 fade-in duration-200 max-h-[50vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()} // Stop propagation to prevent accidental deselection
+          >
               <div className="flex justify-between items-center mb-3 border-b border-slate-100 dark:border-slate-700 pb-2 sticky top-0 bg-white dark:bg-slate-800 z-10">
                   <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                       <Settings2 size={14} /> Properties
@@ -1033,7 +1200,19 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                         )}
                         {'thickness' in singleObj && (
                             <>
-                                <div><label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block mb-1">Thickness (mm)</label><BufferedInput type="number" value={(singleObj as Wall).thickness * 10} disabled={(singleObj as Wall).locked} onChange={(val) => updateSelectedProperty('thickness', parseFloat(val)/10)} className="w-full border border-slate-200 dark:border-slate-600 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none bg-white dark:bg-slate-700 text-slate-900 dark:text-white" /></div>
+                                <div><label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block mb-1">Thickness (mm)</label>
+                                <BufferedInput 
+                                    type="number" 
+                                    value={Math.round((singleObj as Wall).thickness * 10)} 
+                                    disabled={(singleObj as Wall).locked} 
+                                    onChange={(val) => {
+                                        const parsed = parseFloat(val);
+                                        if (!isNaN(parsed) && parsed > 0) {
+                                            updateSelectedProperty('thickness', parsed / 10);
+                                        }
+                                    }} 
+                                    className="w-full border border-slate-200 dark:border-slate-600 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none bg-white dark:bg-slate-700 text-slate-900 dark:text-white" 
+                                /></div>
                                 <div><label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block mb-1">Height (mm)</label><BufferedInput type="number" value={(singleObj as Wall).height} disabled={(singleObj as Wall).locked} onChange={(val) => updateSelectedProperty('height', parseFloat(val))} className="w-full border border-slate-200 dark:border-slate-600 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none bg-white dark:bg-slate-700 text-slate-900 dark:text-white" /></div>
                                 <div><label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block mb-1">Curvature</label><BufferedInput type="number" value={(singleObj as Wall).curvature || 0} disabled={(singleObj as Wall).locked} onChange={(val) => updateSelectedProperty('curvature', parseFloat(val))} className="w-full border border-slate-200 dark:border-slate-600 rounded px-2 py-1 text-sm focus:border-blue-500 outline-none bg-white dark:bg-slate-700 text-slate-900 dark:text-white" /></div>
                             </>
@@ -1117,7 +1296,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
             <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
               <path d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`} fill="none" className="stroke-slate-200 dark:stroke-slate-800" strokeWidth="1"/>
             </pattern>
-            <pattern id="hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <pattern id="wall_hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                 <line x1="0" y1="0" x2="0" y2="10" className="stroke-slate-300 dark:stroke-slate-600" strokeWidth="2" />
             </pattern>
             <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
@@ -1176,7 +1355,14 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                     </g>
                   )}
                   {tool === ToolType.SQUARE_ROOM && (
-                      <rect x={Math.min(drawingStart.x, currentMousePos.x)} y={Math.min(drawingStart.y, currentMousePos.y)} width={Math.abs(drawingStart.x - currentMousePos.x)} height={Math.abs(drawingStart.y - currentMousePos.y)} className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={activeWallThickness} fill="none" opacity="0.5" />
+                      <g>
+                          <rect x={Math.min(drawingStart.x, currentMousePos.x)} y={Math.min(drawingStart.y, currentMousePos.y)} width={Math.abs(drawingStart.x - currentMousePos.x)} height={Math.abs(drawingStart.y - currentMousePos.y)} className="stroke-blue-500 dark:stroke-blue-400" strokeWidth={activeWallThickness} fill="none" opacity="0.5" />
+                          {getRectArea() && (
+                              <text x={(drawingStart.x + currentMousePos.x)/2} y={(drawingStart.y + currentMousePos.y)/2} textAnchor="middle" className="fill-blue-600 dark:fill-blue-400 font-bold text-lg">
+                                  {getRectArea()?.toFixed(1)} m²
+                              </text>
+                          )}
+                      </g>
                   )}
                   {tool === ToolType.DIMENSION && (
                       <line x1={drawingStart.x} y1={drawingStart.y} x2={currentMousePos.x} y2={currentMousePos.y} className="stroke-slate-400 dark:stroke-slate-500" strokeDasharray="2,2"/>

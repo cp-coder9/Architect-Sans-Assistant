@@ -7,7 +7,7 @@ import { ToolType, PlanData, ViewMode, ProjectMetadata, LayerConfig } from './ty
 import { analyzeFloorPlanImage, checkSansCompliance } from './services/geminiService';
 import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck } from 'lucide-react';
 import { SYMBOL_CATALOG } from './components/CanvasEntities';
-import { exportAsPdf, exportAsPng, exportAsSvg } from './utils/exportUtils.tsx';
+import { exportAsPdf, exportAsPng, exportAsSvg } from './components/SheetExporter';
 
 const INITIAL_DATA: PlanData = {
   walls: [],
@@ -408,3 +408,4 @@ export default function App() {
     </div>
   );
 }
+    

@@ -104,15 +104,15 @@ export const SYMBOL_CATALOG: SymbolDef[] = [
 // --- Canvas Entities ---
 
 /**
- * Calculates the SVG path for a wall, optionally calculating segments 
- * to create physical gaps where openings exist.
+ * Calculates the SVG path for a wall, correctly calculating segments 
+ * to create physical gaps where openings exist using interval merging.
  */
 export const getWallPath = (w: Wall, openings: Opening[] = []) => {
     const hasCurve = w.curvature && Math.abs(w.curvature) > 1;
     const wallLen = dist(w.start, w.end);
     
-    // If curved or no openings, simple path
-    if (hasCurve || !openings.length || wallLen === 0) {
+    // If curved or no openings or invalid length, simple path
+    if (hasCurve || !openings.length || wallLen < 0.1) {
         if (!hasCurve) {
             return `M ${w.start.x} ${w.start.y} L ${w.end.x} ${w.end.y}`;
         } else {
@@ -126,34 +126,56 @@ export const getWallPath = (w: Wall, openings: Opening[] = []) => {
         }
     }
 
-    // Straight Wall with Openings: Calculate Segments
-    // 1. Sort openings by position t
-    const sortedOpenings = [...openings].sort((a, b) => a.t - b.t);
-    
-    // 2. Generate segments
+    // Straight Wall with Openings: Robust Segment Calculation
+    // 1. Convert openings to intervals [0..1]
+    let intervals: {start: number, end: number}[] = openings.map(op => {
+        // Fix: op.width is in mm, wallLen is in canvas units (1 unit = 10mm).
+        // Convert width to units by dividing by 10.
+        const halfWidthT = (op.width / 20) / wallLen; 
+        return {
+            start: Math.max(0, op.t - halfWidthT),
+            end: Math.min(1, op.t + halfWidthT)
+        };
+    });
+
+    // 2. Sort by start
+    intervals.sort((a, b) => a.start - b.start);
+
+    // 3. Merge intervals (combine overlapping windows)
+    const merged: {start: number, end: number}[] = [];
+    if (intervals.length > 0) {
+        let current = intervals[0];
+        for (let i = 1; i < intervals.length; i++) {
+            if (intervals[i].start < current.end) {
+                current.end = Math.max(current.end, intervals[i].end);
+            } else {
+                merged.push(current);
+                current = intervals[i];
+            }
+        }
+        merged.push(current);
+    }
+
+    // 4. Generate Wall Segments (The gaps between merged intervals)
     let currentT = 0;
     let path = "";
     const vec = sub(w.end, w.start);
 
-    sortedOpenings.forEach(op => {
-        // Convert width to t-space
-        const halfWidthT = (op.width / 2) / wallLen;
-        const startT = Math.max(0, op.t - halfWidthT);
-        const endT = Math.min(1, op.t + halfWidthT);
-
-        if (startT > currentT) {
-            const p1 = add(w.start, scale(vec, currentT));
-            const p2 = add(w.start, scale(vec, startT));
-            path += `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} `;
+    merged.forEach(gap => {
+        // Draw solid wall before the gap
+        if (gap.start > currentT) {
+             const p1 = add(w.start, scale(vec, currentT));
+             const p2 = add(w.start, scale(vec, gap.start));
+             path += `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} `;
         }
-        currentT = Math.max(currentT, endT);
+        currentT = Math.max(currentT, gap.end);
     });
 
-    // Final segment
+    // Final segment after last gap
     if (currentT < 1) {
-        const p1 = add(w.start, scale(vec, currentT));
-        const p2 = w.end;
-        path += `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} `;
+         const p1 = add(w.start, scale(vec, currentT));
+         const p2 = w.end;
+         path += `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} `;
     }
 
     return path;
@@ -175,7 +197,7 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
             {/* Note: Using segments for stroke is easy, but for fill (strokeWidth) we need to rely on strokeDash or multiple paths. 
                 Here we use the segmented path for the main thick wall body. */}
             {selected && (
-                <path d={segmentedPath} stroke="url(#hatch)" strokeWidth={wall.thickness} strokeLinecap="butt" fill="none" className="pointer-events-none" />
+                <path d={segmentedPath} stroke="url(#wall_hatch)" strokeWidth={wall.thickness} strokeLinecap="butt" fill="none" className="pointer-events-none" />
             )}
             
             {/* Main Wall Body (White fill to cover grid if needed, or transparent with thick stroke) */}
