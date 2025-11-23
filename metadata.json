@@ -1,0 +1,7 @@
+{
+  "name": "SANS 10400-XA Architect Assistant",
+  "description": "AI-powered floor plan redrawing, editing, and compliance checking tool for Johannesburg city submissions.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
