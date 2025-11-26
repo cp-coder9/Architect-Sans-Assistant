@@ -106,6 +106,12 @@ export interface ProjectMetadata {
   revision: string;
   drawnBy: string;
   scale: string;
+  // New Fields
+  sheetNumber: string;
+  drawingHeading: string;
+  generalNotes: string;
+  consultants: Record<string, string>; // Role -> Name map
+  logo?: string; // Base64 encoded logo
 }
 
 export interface PlanData {
@@ -123,7 +129,8 @@ export enum ViewMode {
   PLAN = 'PLAN',
   ELEVATION_SOUTH = 'ELEVATION_SOUTH',
   SECTION = 'SECTION',
-  SCHEDULE = 'SCHEDULE'
+  SCHEDULE = 'SCHEDULE',
+  SHEET = 'SHEET'
 }
 
 export interface LayerConfig {
@@ -133,4 +140,20 @@ export interface LayerConfig {
   showOpenings: boolean;
   showStairs: boolean;
   showSymbols: boolean;
+}
+
+export enum AIProvider {
+  GOOGLE = 'GOOGLE',
+  DEEPSEEK = 'DEEPSEEK',
+  OPENROUTER = 'OPENROUTER',
+  MOONSHOT = 'MOONSHOT',
+  MISTRAL = 'MISTRAL',
+  CUSTOM = 'CUSTOM'
+}
+
+export interface AISettings {
+  provider: AIProvider;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
 }

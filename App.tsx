@@ -3,9 +3,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CanvasEditor } from './components/CanvasEditor';
 import { Toolbar } from './components/Toolbar';
 import { ElevationView } from './components/ElevationView';
-import { ToolType, PlanData, ViewMode, ProjectMetadata, LayerConfig } from './types';
-import { analyzeFloorPlanImage, checkSansCompliance } from './services/geminiService';
-import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck } from 'lucide-react';
+import { SheetPreview } from './components/SheetPreview';
+import { ToolType, PlanData, ViewMode, ProjectMetadata, LayerConfig, AIProvider, AISettings } from './types';
+import { analyzeFloorPlanImage, checkSansCompliance } from './services/aiService';
+import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck, Settings, FileText, ClipboardList, UserSquare2 } from 'lucide-react';
 import { SYMBOL_CATALOG } from './components/CanvasEntities';
 import { exportAsPdf, exportAsPng, exportAsSvg } from './components/SheetExporter';
 
@@ -16,16 +17,22 @@ const INITIAL_DATA: PlanData = {
   dimensions: [],
   stairs: [],
   symbols: [],
-  northArrow: { position: { x: -100, y: -100 }, rotation: 0 },
+  northArrow: { position: { x: 500, y: 300 }, rotation: 0 },
   metadata: {
-    title: "New Residence",
-    client: "Client Name",
-    erfNumber: "Erf 123",
-    address: "Johannesburg, Gauteng",
+    title: "RESIDENTIAL ADDITION",
+    client: "JOHN DOE",
+    erfNumber: "ERF 1234",
+    address: "123 EXAMPLE STREET, JOHANNESBURG",
     date: new Date().toISOString().split('T')[0],
-    revision: "Rev A",
-    drawnBy: "AI Assistant",
-    scale: "1:100"
+    revision: "REV A - ISSUED FOR APPROVAL",
+    drawnBy: "ARCHITECT",
+    scale: "1:100",
+    sheetNumber: "A-101",
+    drawingHeading: "FLOOR PLAN",
+    generalNotes: "1. CONTRACTOR TO VERIFY ALL DIMENSIONS ON SITE BEFORE COMMENCING WORK.\n2. ALL WORK TO COMPLY WITH SANS 10400.\n3. FIGURED DIMENSIONS TO BE USED IN PREFERENCE TO SCALED DIMENSIONS.\n4. DISCREPANCIES TO BE REPORTED TO THE ARCHITECT IMMEDIATELY.",
+    consultants: {
+        "Structural Eng": "STRUCTURAL ENGINEERS INC.",
+    }
   }
 };
 
@@ -38,9 +45,35 @@ const INITIAL_LAYERS: LayerConfig = {
   showSymbols: true
 };
 
+// Safe environment variable access
+const getEnvApiKey = () => {
+  try {
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      return process.env.API_KEY;
+    }
+  } catch (e) {
+    // Ignore error if process is not defined
+  }
+  return '';
+};
+
+const DEFAULT_AI_SETTINGS: AISettings = {
+    provider: AIProvider.GOOGLE,
+    apiKey: getEnvApiKey(),
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    model: 'gemini-2.0-flash'
+};
+
 export default function App() {
   // Theme Management
   const [darkMode, setDarkMode] = useState(true);
+
+  // AI Settings
+  const [aiSettings, setAiSettings] = useState<AISettings>(() => {
+      const saved = localStorage.getItem('ai_settings');
+      return saved ? JSON.parse(saved) : DEFAULT_AI_SETTINGS;
+  });
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // History Management
   const [history, setHistory] = useState<PlanData[]>([INITIAL_DATA]);
@@ -88,6 +121,8 @@ export default function App() {
   const [complianceReport, setComplianceReport] = useState<string | null>(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [isMetadataOpen, setIsMetadataOpen] = useState(false);
+  const [metadataTab, setMetadataTab] = useState<'project' | 'sheet' | 'consultants' | 'notes'>('project');
+
   const [layers, setLayers] = useState<LayerConfig>(INITIAL_LAYERS);
   
   // Dropdowns
@@ -96,27 +131,38 @@ export default function App() {
   
   const canvasRef = useRef<any>(null);
 
+  const saveAiSettings = (newSettings: AISettings) => {
+      setAiSettings(newSettings);
+      localStorage.setItem('ai_settings', JSON.stringify(newSettings));
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!aiSettings.apiKey) {
+        alert("Please configure an API Key in Settings first.");
+        setIsSettingsOpen(true);
+        return;
+    }
 
     setIsLoading(true);
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64 = reader.result as string;
       try {
-        const analysis = await analyzeFloorPlanImage(base64);
+        const analysis = await analyzeFloorPlanImage(base64, aiSettings);
         updatePlanData({
           ...planData,
           walls: analysis.walls || [],
           labels: analysis.labels || [],
-          openings: [],
-          stairs: [],
+          openings: analysis.openings || [],
+          stairs: analysis.stairs || [],
           symbols: [],
           northArrow: planData.northArrow
         });
       } catch (err) {
-        alert("AI Analysis failed. Starting with blank canvas.");
+        alert(`AI Analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
       } finally {
         setIsLoading(false);
         setIsMenuOpen(false);
@@ -125,9 +171,24 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        handleMetadataChange('logo', event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleCheckCompliance = async () => {
+    if (!aiSettings.apiKey) {
+        alert("Please configure an API Key in Settings first.");
+        setIsSettingsOpen(true);
+        return;
+    }
     setIsLoading(true);
-    const report = await checkSansCompliance(planData);
+    const report = await checkSansCompliance(planData, aiSettings);
     setComplianceReport(report);
     setIsReportOpen(true);
     setIsLoading(false);
@@ -157,6 +218,12 @@ export default function App() {
                   if (!loadedData.stairs) loadedData.stairs = [];
                   if (!loadedData.symbols) loadedData.symbols = [];
                   if (!loadedData.northArrow) loadedData.northArrow = { position: { x: 50, y: 50 }, rotation: 0 };
+                  // Ensure new metadata fields
+                  if (!loadedData.metadata.generalNotes) loadedData.metadata.generalNotes = INITIAL_DATA.metadata.generalNotes;
+                  if (!loadedData.metadata.sheetNumber) loadedData.metadata.sheetNumber = "A001";
+                  if (!loadedData.metadata.drawingHeading) loadedData.metadata.drawingHeading = "FLOOR PLAN";
+                  if (!loadedData.metadata.consultants) loadedData.metadata.consultants = {};
+
                   updatePlanData(loadedData);
               } else {
                   alert("Invalid project file.");
@@ -169,14 +236,62 @@ export default function App() {
       reader.readAsText(file);
   };
   
-  const handleMetadataChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const { name, value } = e.target;
-      const newMetadata = { ...planData.metadata, [name]: value };
+  const handleMetadataChange = (key: string, value: string) => {
+      const newMetadata = { ...planData.metadata, [key]: value };
+      updatePlanData({ ...planData, metadata: newMetadata }, false);
+  };
+
+  const handleConsultantChange = (role: string, name: string) => {
+      const newConsultants = { ...planData.metadata.consultants, [role]: name };
+      // Filter empty
+      if (!name) delete newConsultants[role];
+      const newMetadata = { ...planData.metadata, consultants: newConsultants };
       updatePlanData({ ...planData, metadata: newMetadata }, false);
   };
 
   const toggleLayer = (key: keyof LayerConfig) => {
       setLayers(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const renderContent = () => {
+      switch (viewMode) {
+          case ViewMode.PLAN:
+              return (
+                <CanvasEditor 
+                    ref={canvasRef}
+                    data={planData}
+                    onUpdate={updatePlanData}
+                    tool={activeTool}
+                    onToolChange={setActiveTool}
+                    viewMode={viewMode}
+                    layers={layers}
+                    
+                    activeSymbolId={activeSymbolId}
+                    activeWallThickness={activeWallThickness}
+                    activeDoorType={activeDoorType}
+                    activeWindowType={activeWindowType}
+                />
+              );
+          case ViewMode.ELEVATION_SOUTH:
+          case ViewMode.SECTION:
+          case ViewMode.SCHEDULE:
+              return (
+                <ElevationView 
+                    data={planData}
+                    mode={viewMode}
+                    onUpdate={updatePlanData}
+                />
+              );
+          case ViewMode.SHEET:
+              return (
+                  <SheetPreview 
+                      data={planData}
+                      onUpdate={updatePlanData}
+                  />
+              );
+          default:
+              return null;
+      }
   };
 
   return (
@@ -213,6 +328,13 @@ export default function App() {
                             <ImageIcon size={16} /> Import Image
                             <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                         </label>
+                        <div className="border-t dark:border-slate-700 my-1"></div>
+                        <button 
+                          onClick={() => { setIsSettingsOpen(true); setIsMenuOpen(false); }}
+                          className="w-full text-left px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
+                        >
+                            <Settings size={16} /> AI Settings
+                        </button>
                     </div>
                 )}
             </div>
@@ -220,6 +342,13 @@ export default function App() {
             <div>
               <h1 className="font-bold text-sm md:text-lg leading-tight text-slate-800 dark:text-slate-100">SANS 10400-XA Architect</h1>
             </div>
+            
+            <button 
+              onClick={() => { setMetadataTab('project'); setIsMetadataOpen(true); }}
+              className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 ml-4 hidden md:flex"
+            >
+                <UserSquare2 size={14} /> Title Block Editor
+            </button>
           </div>
           
           <div className="flex items-center gap-2">
@@ -233,6 +362,7 @@ export default function App() {
                 <option value={ViewMode.ELEVATION_SOUTH}>Elevation (South)</option>
                 <option value={ViewMode.SECTION}>Section A-A</option>
                 <option value={ViewMode.SCHEDULE}>Schedules</option>
+                <option value={ViewMode.SHEET}>Sheet Preview (A1)</option>
               </select>
 
               {/* Theme Toggle */}
@@ -291,58 +421,109 @@ export default function App() {
         {/* Main Content */}
         <div className="flex flex-1 overflow-hidden relative">
           
-          {/* Canvas / View Area */}
-          {viewMode === ViewMode.PLAN ? (
-            <CanvasEditor 
-              ref={canvasRef}
-              data={planData}
-              onUpdate={updatePlanData}
-              tool={activeTool}
-              onToolChange={setActiveTool}
-              viewMode={viewMode}
-              layers={layers}
-              
-              activeSymbolId={activeSymbolId}
-              activeWallThickness={activeWallThickness}
-              activeDoorType={activeDoorType}
-              activeWindowType={activeWindowType}
-            />
-          ) : (
-            <ElevationView 
-              data={planData}
-              mode={viewMode}
-              onUpdate={updatePlanData}
+          {/* View Area */}
+          {renderContent()}
+
+          {/* Floating Drawing Tools Dock (Only in Plan View) */}
+          {viewMode === ViewMode.PLAN && (
+            <Toolbar 
+                activeTool={activeTool} 
+                setTool={setActiveTool} 
+                onExportSvg={() => exportAsSvg(planData)}
+                onExportPng={() => exportAsPng(planData)}
+                onExportPdf={() => exportAsPdf(planData)}
+                onCheckCompliance={handleCheckCompliance}
+                onEditMetadata={() => { setMetadataTab('project'); setIsMetadataOpen(true); }}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                canUndo={currentStep > 0}
+                canRedo={currentStep < history.length - 1}
+                
+                activeSymbolId={activeSymbolId}
+                onSymbolSelect={setActiveSymbolId}
+                activeSymbolCategory={activeSymbolCategory}
+                onSymbolCategorySelect={setActiveSymbolCategory}
+                
+                activeWallThickness={activeWallThickness}
+                onWallThicknessChange={setActiveWallThickness}
+                
+                activeDoorType={activeDoorType}
+                onDoorTypeChange={setActiveDoorType}
+                
+                activeWindowType={activeWindowType}
+                onWindowTypeChange={setActiveWindowType}
             />
           )}
 
-          {/* Floating Drawing Tools Dock */}
-          <Toolbar 
-            activeTool={activeTool} 
-            setTool={setActiveTool} 
-            onExportSvg={() => exportAsSvg(planData)}
-            onExportPng={() => exportAsPng(planData)}
-            onExportPdf={() => exportAsPdf(planData)}
-            onCheckCompliance={handleCheckCompliance}
-            onEditMetadata={() => setIsMetadataOpen(true)}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
-            canUndo={currentStep > 0}
-            canRedo={currentStep < history.length - 1}
-            
-            activeSymbolId={activeSymbolId}
-            onSymbolSelect={setActiveSymbolId}
-            activeSymbolCategory={activeSymbolCategory}
-            onSymbolCategorySelect={setActiveSymbolCategory}
-            
-            activeWallThickness={activeWallThickness}
-            onWallThicknessChange={setActiveWallThickness}
-            
-            activeDoorType={activeDoorType}
-            onDoorTypeChange={setActiveDoorType}
-            
-            activeWindowType={activeWindowType}
-            onWindowTypeChange={setActiveWindowType}
-          />
+          {/* AI Settings Modal */}
+          {isSettingsOpen && (
+              <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-white dark:bg-slate-900 rounded-lg shadow-2xl w-full max-w-lg">
+                      <div className="p-4 border-b dark:border-slate-700 flex justify-between items-center">
+                          <h2 className="font-bold text-slate-800 dark:text-white flex items-center gap-2"><Settings size={18} /> AI Provider Settings</h2>
+                          <button onClick={() => setIsSettingsOpen(false)} className="text-slate-500">✕</button>
+                      </div>
+                      <div className="p-6 gap-4 flex flex-col">
+                          <div>
+                              <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Provider</label>
+                              <select 
+                                value={aiSettings.provider}
+                                onChange={(e) => {
+                                    const p = e.target.value as AIProvider;
+                                    let defaults = { ...aiSettings, provider: p };
+                                    if (p === AIProvider.GOOGLE) { defaults.baseUrl = 'https://generativelanguage.googleapis.com'; defaults.model = 'gemini-2.0-flash'; }
+                                    else if (p === AIProvider.OPENROUTER) { defaults.baseUrl = 'https://openrouter.ai/api/v1'; defaults.model = 'google/gemini-2.0-flash-001'; }
+                                    else if (p === AIProvider.DEEPSEEK) { defaults.baseUrl = 'https://api.deepseek.com'; defaults.model = 'deepseek-chat'; }
+                                    else if (p === AIProvider.MISTRAL) { defaults.baseUrl = 'https://api.mistral.ai/v1'; defaults.model = 'pixtral-12b-2409'; }
+                                    else if (p === AIProvider.MOONSHOT) { defaults.baseUrl = 'https://api.moonshot.cn/v1'; defaults.model = 'moonshot-v1-8k'; }
+                                    setAiSettings(defaults);
+                                }}
+                                className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                              >
+                                  <option value={AIProvider.GOOGLE}>Google Gemini (Recommended)</option>
+                                  <option value={AIProvider.DEEPSEEK}>DeepSeek</option>
+                                  <option value={AIProvider.OPENROUTER}>OpenRouter</option>
+                                  <option value={AIProvider.MISTRAL}>Mistral / Pixtral</option>
+                                  <option value={AIProvider.MOONSHOT}>Moonshot AI</option>
+                                  <option value={AIProvider.CUSTOM}>Custom OpenAI Compatible</option>
+                              </select>
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">API Key</label>
+                              <input 
+                                type="password"
+                                value={aiSettings.apiKey}
+                                onChange={(e) => setAiSettings({...aiSettings, apiKey: e.target.value})}
+                                placeholder="sk-..."
+                                className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                              />
+                              <p className="text-[10px] text-slate-500 mt-1">Your key is stored locally in your browser.</p>
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Base URL</label>
+                              <input 
+                                value={aiSettings.baseUrl}
+                                onChange={(e) => setAiSettings({...aiSettings, baseUrl: e.target.value})}
+                                disabled={aiSettings.provider === AIProvider.GOOGLE}
+                                className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 disabled:opacity-50"
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Model ID</label>
+                              <input 
+                                value={aiSettings.model}
+                                onChange={(e) => setAiSettings({...aiSettings, model: e.target.value})}
+                                className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                              />
+                          </div>
+                      </div>
+                      <div className="p-4 border-t dark:border-slate-700 flex justify-end gap-2">
+                          <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded">Cancel</button>
+                          <button onClick={() => { saveAiSettings(aiSettings); setIsSettingsOpen(false); }} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Settings</button>
+                      </div>
+                  </div>
+              </div>
+          )}
 
           {/* Compliance Report Modal */}
           {isReportOpen && (
@@ -368,29 +549,175 @@ export default function App() {
             </div>
           )}
 
-          {/* Metadata Modal */}
+          {/* Metadata & Title Block Editor Modal */}
           {isMetadataOpen && (
             <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-               <div className="bg-white dark:bg-slate-900 rounded-lg shadow-2xl w-full max-w-lg">
-                  <div className="p-4 border-b dark:border-slate-700 flex justify-between items-center">
-                     <h2 className="font-bold text-slate-800 dark:text-white">Project Metadata</h2>
+               <div className="bg-white dark:bg-slate-900 rounded-lg shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+                  
+                  <div className="p-4 border-b dark:border-slate-700 flex justify-between items-center shrink-0">
+                     <h2 className="font-bold text-slate-800 dark:text-white">Title Block & Metadata Editor</h2>
                      <button onClick={() => setIsMetadataOpen(false)} className="text-slate-500">✕</button>
                   </div>
-                  <div className="p-6 grid gap-4">
-                      {Object.entries(planData.metadata).map(([key, val]) => (
-                          <div key={key}>
-                              <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">{key}</label>
-                              <input 
-                                name={key}
-                                value={val}
-                                onChange={handleMetadataChange}
-                                className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+
+                  {/* Tabs */}
+                  <div className="flex border-b dark:border-slate-700 shrink-0">
+                      <button onClick={() => setMetadataTab('project')} className={`flex-1 py-3 text-sm font-medium ${metadataTab === 'project' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Project Info</button>
+                      <button onClick={() => setMetadataTab('sheet')} className={`flex-1 py-3 text-sm font-medium ${metadataTab === 'sheet' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Sheet Details</button>
+                      <button onClick={() => setMetadataTab('consultants')} className={`flex-1 py-3 text-sm font-medium ${metadataTab === 'consultants' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>Consultants</button>
+                      <button onClick={() => setMetadataTab('notes')} className={`flex-1 py-3 text-sm font-medium ${metadataTab === 'notes' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>General Notes</button>
+                  </div>
+
+                  <div className="p-6 overflow-y-auto">
+                      {/* Project Info Tab */}
+                      {metadataTab === 'project' && (
+                          <div className="grid gap-4">
+                               {/* Logo Upload */}
+                               <div className="flex items-start gap-4 p-4 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                                   <div className="flex-1">
+                                       <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-2">Company Logo</label>
+                                       <label className="inline-flex items-center gap-2 px-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded text-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200">
+                                            <Upload size={14} /> Upload Image
+                                            <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                                       </label>
+                                   </div>
+                                   {planData.metadata.logo && (
+                                       <div className="relative w-24 h-24 border border-slate-200 dark:border-slate-700 bg-white rounded flex items-center justify-center overflow-hidden">
+                                           <img src={planData.metadata.logo} alt="Logo Preview" className="max-w-full max-h-full object-contain" />
+                                       </div>
+                                   )}
+                               </div>
+
+                              <div>
+                                  <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Project Name (Title)</label>
+                                  <input 
+                                    value={planData.metadata.title}
+                                    onChange={(e) => handleMetadataChange('title', e.target.value)}
+                                    className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Client Name</label>
+                                  <input 
+                                    value={planData.metadata.client}
+                                    onChange={(e) => handleMetadataChange('client', e.target.value)}
+                                    className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Project Address / Site</label>
+                                  <input 
+                                    value={planData.metadata.address}
+                                    onChange={(e) => handleMetadataChange('address', e.target.value)}
+                                    className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Erf / Plot Number</label>
+                                  <input 
+                                    value={planData.metadata.erfNumber}
+                                    onChange={(e) => handleMetadataChange('erfNumber', e.target.value)}
+                                    className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                  />
+                              </div>
+                          </div>
+                      )}
+
+                      {/* Sheet Details Tab */}
+                      {metadataTab === 'sheet' && (
+                          <div className="grid gap-4">
+                              <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                      <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Sheet Number</label>
+                                      <input 
+                                        value={planData.metadata.sheetNumber}
+                                        onChange={(e) => handleMetadataChange('sheetNumber', e.target.value)}
+                                        className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold"
+                                        placeholder="A-101"
+                                      />
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Revision</label>
+                                      <input 
+                                        value={planData.metadata.revision}
+                                        onChange={(e) => handleMetadataChange('revision', e.target.value)}
+                                        className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                        placeholder="ISSUED FOR CONSTRUCTION"
+                                      />
+                                  </div>
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Drawing Heading</label>
+                                  <input 
+                                    value={planData.metadata.drawingHeading}
+                                    onChange={(e) => handleMetadataChange('drawingHeading', e.target.value)}
+                                    className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                    placeholder="EXTERIOR BUILDING PLAN DETAILS"
+                                  />
+                              </div>
+                              <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                      <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Date</label>
+                                      <input 
+                                        type="date"
+                                        value={planData.metadata.date}
+                                        onChange={(e) => handleMetadataChange('date', e.target.value)}
+                                        className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                      />
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Scale</label>
+                                      <input 
+                                        value={planData.metadata.scale}
+                                        onChange={(e) => handleMetadataChange('scale', e.target.value)}
+                                        className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                      />
+                                  </div>
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Drawn By</label>
+                                  <input 
+                                    value={planData.metadata.drawnBy}
+                                    onChange={(e) => handleMetadataChange('drawnBy', e.target.value)}
+                                    className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                  />
+                              </div>
+                          </div>
+                      )}
+
+                      {/* Consultants Tab */}
+                      {metadataTab === 'consultants' && (
+                          <div className="grid gap-4">
+                              <p className="text-xs text-slate-500">Add key project team members to appear in the title block.</p>
+                              {["Design Build Contractor", "Civil/Structural Engineer", "Landscape Architect", "MEP Engineer"].map(role => (
+                                  <div key={role}>
+                                      <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">{role}</label>
+                                      <input 
+                                        value={planData.metadata.consultants[role] || ''}
+                                        onChange={(e) => handleConsultantChange(role, e.target.value)}
+                                        className="w-full border border-slate-300 dark:border-slate-600 rounded p-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                                        placeholder={`Company Name`}
+                                      />
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+
+                      {/* General Notes Tab */}
+                      {metadataTab === 'notes' && (
+                          <div className="h-full flex flex-col">
+                              <label className="block text-xs font-bold uppercase text-slate-500 dark:text-slate-400 mb-2">General Notes (Appears on Sheet)</label>
+                              <textarea 
+                                value={planData.metadata.generalNotes}
+                                onChange={(e) => handleMetadataChange('generalNotes', e.target.value)}
+                                className="w-full flex-1 min-h-[300px] border border-slate-300 dark:border-slate-600 rounded p-3 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-sm leading-relaxed"
+                                placeholder="1. All dimensions to be checked on site..."
                               />
                           </div>
-                      ))}
+                      )}
+
                   </div>
-                  <div className="p-4 border-t dark:border-slate-700 flex justify-end">
-                     <button onClick={() => setIsMetadataOpen(false)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Done</button>
+                  <div className="p-4 border-t dark:border-slate-700 flex justify-end shrink-0">
+                     <button onClick={() => setIsMetadataOpen(false)} className="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium shadow-sm">Done</button>
                   </div>
                </div>
             </div>
@@ -408,4 +735,3 @@ export default function App() {
     </div>
   );
 }
-    
