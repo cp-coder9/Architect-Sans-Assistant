@@ -83,10 +83,8 @@ export const SYMBOL_CATALOG: SymbolDef[] = [
     )}
 ];
 
-// --- Wall Helpers ---
+// --- Wall Geometry & Miter Logic ---
 
-// Helper for Quadratic Bezier
-// P(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
 const getQuadBezierPoint = (p0: Point, p1: Point, p2: Point, t: number): Point => {
     const mt = 1 - t;
     return {
@@ -95,86 +93,140 @@ const getQuadBezierPoint = (p0: Point, p1: Point, p2: Point, t: number): Point =
     };
 };
 
-// Sub-curve of a Quadratic Bezier from tStart to tEnd
-// Returns {start, control, end} for the new segment
 const getSubBezier = (p0: Point, p1: Point, p2: Point, tStart: number, tEnd: number) => {
-    const u0 = 1 - tStart;
-    const u1 = 1 - tEnd;
-
     const start = getQuadBezierPoint(p0, p1, p2, tStart);
     const end = getQuadBezierPoint(p0, p1, p2, tEnd);
-
-    // Control point for the sub-segment
-    // Derived from De Casteljau's algorithm or splitting properties
-    // Q1 = (1-t0)P0 + t0P1 (This is point on P0-P1 at t0)
-    // Q2 = (1-t0)P1 + t0P2 (This is point on P1-P2 at t0)
-    // The subcurve from t0 to 1 has control point Q2.
-    // We need general [t0, t1].
-    // Simpler: Just interpolate between the Q points at tStart and tEnd? No.
-    
-    // Let's compute intermediate points for De Casteljau at tStart
-    const q0_start = { x: u0 * p0.x + tStart * p1.x, y: u0 * p0.y + tStart * p1.y };
-    const q1_start = { x: u0 * p1.x + tStart * p2.x, y: u0 * p1.y + tStart * p2.y };
-    // The curve from tStart to 1 is defined by Start, q1_start, p2.
-    // Now we need to split THIS curve at relative parameter for tEnd.
-    // relative T' = (tEnd - tStart) / (1 - tStart)
-    
-    const tPrime = (tEnd - tStart) / (1 - tStart);
-    const uPrime = 1 - tPrime;
-    
-    // Split the curve (Start, q1_start, p2) at tPrime. We want the first part.
-    // Left sub-segment control point is (1-t')Start + t'q1_start ? No.
-    // Standard split at T:
-    // Left CP = (1-T)P0 + T P1
-    // Here P0=Start, P1=q1_start.
-    const cp = {
-        x: uPrime * start.x + tPrime * q1_start.x, // This is close but check De Casteljau layers
-        y: uPrime * start.y + tPrime * q1_start.y
-    };
-    // Actually, a cleaner way for sub-segment P0->P1->P2 from t1 to t2:
-    // C = P1 + (P0-P1)*t1 + (P2-P1)*(1-t2) ? No.
-    
-    // Re-eval: Q(t) is tangent intersection.
-    // Let's just use the geometric property that the new control point is the intersection 
-    // of the tangent at Start and tangent at End.
-    // Tangent at bezier(t) is vector: 2(1-t)(P1-P0) + 2t(P2-P1).
-    // This is reliable.
-    
-    // Tangent vectors
     const tan1 = sub(getQuadBezierPoint(p0, p1, p2, tStart + 0.001), start);
     const tan2 = sub(end, getQuadBezierPoint(p0, p1, p2, tEnd - 0.001));
-    
-    // Intersect the lines: Start + k*tan1  and  End + j*tan2
     const intersection = intersectInfiniteLines(
         start, add(start, scale(tan1, 100)),
         end, add(end, scale(tan2, 100))
     );
-    
     return { start, control: intersection || scale(add(start, end), 0.5), end };
+};
+
+// Robust Miter Calculation using Radial Sorting
+const getCornerPoints = (p: Point, currentId: string, allWalls: Wall[]): { left: Point, right: Point } => {
+    // 1. Find all walls connected at point p
+    const connected = allWalls.filter(w => dist(w.start, p) < 0.1 || dist(w.end, p) < 0.1);
+    
+    // Fallback if isolated
+    const currentWall = allWalls.find(w => w.id === currentId);
+    if (!currentWall || connected.length <= 1) {
+        if (!currentWall) return { left: p, right: p };
+        const otherEnd = dist(currentWall.start, p) < 0.1 ? currentWall.end : currentWall.start;
+        const v = norm(sub(otherEnd, p));
+        const n = { x: -v.y, y: v.x };
+        const half = currentWall.thickness / 2;
+        return { left: add(p, scale(n, half)), right: sub(p, scale(n, half)) };
+    }
+
+    // 2. Map walls to angular vectors leaving p
+    const radialWalls = connected.map(w => {
+        const otherEnd = dist(w.start, p) < 0.1 ? w.end : w.start;
+        const v = norm(sub(otherEnd, p));
+        // Angle in standard cartesian (0 is Right, 90 is Down in SVG y-down)
+        const angle = Math.atan2(v.y, v.x); 
+        return { id: w.id, v, angle, thickness: w.thickness };
+    });
+
+    // 3. Sort radially
+    radialWalls.sort((a, b) => a.angle - b.angle);
+
+    // 4. Find neighbors in sorted list
+    const idx = radialWalls.findIndex(rw => rw.id === currentId);
+    const cw = radialWalls[idx]; // Current Wall
+    const nextW = radialWalls[(idx + 1) % radialWalls.length]; // Next Wall (CCW if y-down? Let's verify)
+    const prevW = radialWalls[(idx - 1 + radialWalls.length) % radialWalls.length]; // Prev Wall
+
+    // 5. Calculate intersection of offset lines
+    // Normal n is rotated -90 deg from v (Left hand side relative to v)
+    // Offset Line Left: p + n * (thickness/2) + t * v
+    // Offset Line Right: p - n * (thickness/2) + t * v
+    
+    const getOffsetLine = (rw: typeof cw, side: 'left' | 'right') => {
+        const n = { x: -rw.v.y, y: rw.v.x }; // Normal
+        const sign = side === 'left' ? 1 : -1;
+        const origin = add(p, scale(n, sign * rw.thickness / 2));
+        const p2 = add(origin, rw.v);
+        return { p1: origin, p2 };
+    };
+
+    // Current Left should meet Next Right (due to cyclic order)
+    const lineL = getOffsetLine(cw, 'left');
+    const lineNextR = getOffsetLine(nextW, 'right');
+    let leftIntersection = intersectInfiniteLines(lineL.p1, lineL.p2, lineNextR.p1, lineNextR.p2);
+
+    // Current Right should meet Prev Left
+    const lineR = getOffsetLine(cw, 'right');
+    const linePrevL = getOffsetLine(prevW, 'left');
+    let rightIntersection = intersectInfiniteLines(lineR.p1, lineR.p2, linePrevL.p1, linePrevL.p2);
+
+    // Safety caps for near-parallel lines
+    const MAX_MITER_LEN = Math.max(cw.thickness, nextW.thickness, prevW.thickness) * 3;
+    
+    // Fallback if parallel (180 deg join)
+    if (!leftIntersection || dist(p, leftIntersection) > MAX_MITER_LEN) {
+        // Use bisector or fallback
+        const n = { x: -cw.v.y, y: cw.v.x };
+        leftIntersection = add(p, scale(n, cw.thickness/2));
+    }
+    if (!rightIntersection || dist(p, rightIntersection) > MAX_MITER_LEN) {
+        const n = { x: -cw.v.y, y: cw.v.x };
+        rightIntersection = sub(p, scale(n, cw.thickness/2));
+    }
+
+    return { left: leftIntersection, right: rightIntersection };
+};
+
+export const computeWallCorners = (wall: Wall, allWalls: Wall[]): Point[] => {
+    if (wall.curvature && Math.abs(wall.curvature) > 0.1) return []; 
+
+    const startCorners = getCornerPoints(wall.start, wall.id, allWalls);
+    const endCorners = getCornerPoints(wall.end, wall.id, allWalls);
+
+    // Topology: StartLeft -> EndLeft -> EndRight -> StartRight
+    // NOTE: getCornerPoints returns Left/Right relative to vector LEAVING the junction.
+    // For Start: V = Start->End. Left is Left.
+    // For End: V = End->Start. Left is Left (relative to looking back).
+    // So Wall's "Left" side connects Start.Left to End.Right (because End.Right is on the same geometric side as Start.Left)
+    // Let's trace:
+    // Start V = (1,0). Left = (0, -1). 
+    // End V = (-1, 0). Left = (0, 1). Right = (0, -1).
+    // So Start.Left connects to End.Right.
+    
+    return [
+        startCorners.left,
+        endCorners.right,
+        endCorners.left,
+        startCorners.right
+    ];
 };
 
 export const getWallPath = (w: Wall, openings: Opening[] = []) => {
     if (w.curvature && Math.abs(w.curvature) > 0.1) {
-        const mid = scale(add(w.start, w.end), 0.5);
+        const trueMid = { x: (w.start.x + w.end.x)/2, y: (w.start.y + w.end.y)/2 };
         const dir = norm(sub(w.end, w.start));
         const normal = { x: -dir.y, y: dir.x };
-        const trueMid = { x: (w.start.x + w.end.x)/2, y: (w.start.y + w.end.y)/2 };
-        const curv = w.curvature || 0;
-        const control = add(trueMid, scale(normal, curv * 2));
+        const control = add(trueMid, scale(normal, w.curvature * 2));
         return `M ${w.start.x} ${w.start.y} Q ${control.x} ${control.y} ${w.end.x} ${w.end.y}`;
     }
-    // Simple line for straight walls
     return `M ${w.start.x} ${w.start.y} L ${w.end.x} ${w.end.y}`;
 };
 
-// Returns INTERVALS [tStart, tEnd] for wall body parts (skipping openings)
+export const getWallOutlinePath = (w: Wall, allWalls: Wall[]): string => {
+    if (w.curvature && Math.abs(w.curvature) > 0.1) return getWallPath(w); 
+    const corners = computeWallCorners(w, allWalls);
+    if (corners.length !== 4) return getWallPath(w);
+    return `M ${corners[0].x} ${corners[0].y} L ${corners[1].x} ${corners[1].y} L ${corners[2].x} ${corners[2].y} L ${corners[3].x} ${corners[3].y} Z`;
+};
+
 const getWallIntervals = (w: Wall, openings: Opening[]) => {
     const wallLen = dist(w.start, w.end);
     if (wallLen < 0.1) return [{start: 0, end: 1}];
 
     let intervals: {start: number, end: number}[] = openings.map(op => {
         const widthUnits = op.width / 10;
-        // Arc length approximation: Linear length. For steep curves this is inaccurate but usable for floor plans.
         const halfWidthT = (widthUnits / 2) / wallLen; 
         return {
             start: Math.max(0, op.t - halfWidthT),
@@ -202,17 +254,18 @@ const getWallIntervals = (w: Wall, openings: Opening[]) => {
     let currentT = 0;
 
     merged.forEach(gap => {
-        if (gap.start > currentT) {
-             solidIntervals.push({ start: currentT, end: gap.start });
-        }
+        if (gap.start > currentT) solidIntervals.push({ start: currentT, end: gap.start });
         currentT = Math.max(currentT, gap.end);
     });
 
-    if (currentT < 1) {
-         solidIntervals.push({ start: currentT, end: 1 });
-    }
+    if (currentT < 1) solidIntervals.push({ start: currentT, end: 1 });
 
     return solidIntervals;
+};
+
+const getWallHatch = (thickness: number) => {
+    if (thickness <= 10) return "url(#hatch_drywall)"; 
+    return "url(#hatch_brick)"; 
 };
 
 interface WallEntityProps { 
@@ -220,46 +273,46 @@ interface WallEntityProps {
     openings?: Opening[]; 
     selected: boolean; 
     allWalls?: Wall[];
+    layer?: 'fill' | 'hatch' | 'stroke' | 'all';
     onMouseDown?: (e: React.MouseEvent) => void; 
 }
 
-export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], selected, allWalls = [], onMouseDown }) => {
+export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], selected, allWalls = [], layer = 'all', onMouseDown }) => {
     const isCurved = wall.curvature && Math.abs(wall.curvature) > 0.1;
     const solidIntervals = getWallIntervals(wall, openings);
+    const hatchUrl = getWallHatch(wall.thickness);
+
+    const showFill = layer === 'all' || layer === 'fill';
+    const showHatch = layer === 'all' || layer === 'hatch';
+    const showStroke = layer === 'all' || layer === 'stroke';
 
     // --- CURVED WALL RENDERING ---
     if (isCurved) {
-        const mid = scale(add(wall.start, wall.end), 0.5);
+        const trueMid = { x: (wall.start.x + wall.end.x)/2, y: (wall.start.y + wall.end.y)/2 };
         const dir = norm(sub(wall.end, wall.start));
         const normal = { x: -dir.y, y: dir.x };
         const curv = wall.curvature || 0;
-        const trueMid = { x: (wall.start.x + wall.end.x)/2, y: (wall.start.y + wall.end.y)/2 };
-        const control = add(trueMid, scale(normal, curv * 2)); // Control point for the quadratic bezier
+        const control = add(trueMid, scale(normal, curv * 2)); 
 
         return (
             <g onMouseDown={onMouseDown} className="wall-entity">
                 {/* Hit Area */}
-                <path d={getWallPath(wall)} stroke="transparent" strokeWidth={wall.thickness + 20} fill="none" />
-
+                {layer === 'all' && <path d={getWallPath(wall)} stroke="transparent" strokeWidth={wall.thickness + 20} fill="none" />}
+                
                 {solidIntervals.map((interval, i) => {
                     if (Math.abs(interval.end - interval.start) < 0.001) return null;
                     const subC = getSubBezier(wall.start, control, wall.end, interval.start, interval.end);
                     const d = `M ${subC.start.x} ${subC.start.y} Q ${subC.control.x} ${subC.control.y} ${subC.end.x} ${subC.end.y}`;
-                    
-                    // Render using Layered Strokes to simulate a filled wall with borders
                     return (
                         <g key={i}>
-                            {/* 1. Border simulation (Thick black line background) */}
-                            <path d={d} stroke="black" strokeWidth={wall.thickness} fill="none" strokeLinecap="butt" mask="url(#wall-cleaner)" />
-                            
-                            {/* 2. Fill simulation (Thinner white line inside) */}
-                            <path d={d} stroke="white" className="dark:stroke-slate-900" strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" />
-                            
-                            {/* 3. Hatch Pattern (Overlay on fill) */}
-                            <path d={d} stroke="url(#wall_hatch)" strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" opacity="0.5" />
-                            
-                            {/* 4. Selection Highlight */}
-                            {selected && <path d={d} stroke="#3b82f6" strokeWidth={wall.thickness} opacity="0.3" fill="none" />}
+                            {showFill && <path d={d} stroke="white" className="dark:stroke-slate-900" strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" />}
+                            {showHatch && <path d={d} stroke={hatchUrl} strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" opacity="0.5" />}
+                            {showStroke && (
+                                <>
+                                    <path d={d} stroke="black" className={selected ? 'stroke-blue-500' : 'stroke-black dark:stroke-slate-200'} strokeWidth={selected ? 2 : 1} fill="none" strokeLinecap="butt" mask="url(#wall-cleaner)" vectorEffect="non-scaling-stroke" />
+                                    {selected && <path d={d} stroke="#3b82f6" strokeWidth={wall.thickness} opacity="0.3" fill="none" />}
+                                </>
+                            )}
                         </g>
                     );
                 })}
@@ -268,48 +321,45 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
     }
 
     // --- STRAIGHT WALL RENDERING ---
-    const dir = norm(sub(wall.end, wall.start));
-    const normal = { x: -dir.y, y: dir.x };
-    const halfThick = wall.thickness / 2;
-    const vec = sub(wall.end, wall.start);
+    const corners = computeWallCorners(wall, allWalls);
+    if (corners.length !== 4) return null;
+    
+    const p1 = corners[0]; // Start Left
+    const p2 = corners[1]; // End Right
+    const p3 = corners[2]; // End Left
+    const p4 = corners[3]; // Start Right
+    
+    const vecLeft = sub(p2, p1);
+    const vecRight = sub(p3, p4);
 
     return (
         <g onMouseDown={onMouseDown} className="wall-entity">
-             {/* Hit Area */}
-            <path d={getWallPath(wall, openings)} stroke="transparent" strokeWidth={wall.thickness + 20} fill="none" />
+             {layer === 'all' && <path d={getWallPath(wall, openings)} stroke="transparent" strokeWidth={wall.thickness + 20} fill="none" />}
 
             {solidIntervals.map((interval, i) => {
-                const pStart = add(wall.start, scale(vec, interval.start));
-                const pEnd = add(wall.start, scale(vec, interval.end));
+                const subP1 = add(p1, scale(vecLeft, interval.start));
+                const subP2 = add(p1, scale(vecLeft, interval.end));
+                const subP4 = add(p4, scale(vecRight, interval.start));
+                const subP3 = add(p4, scale(vecRight, interval.end));
 
-                const sp1 = add(pStart, scale(normal, halfThick));
-                const sp2 = add(pEnd, scale(normal, halfThick));
-                const sp3 = add(pEnd, scale(normal, -halfThick));
-                const sp4 = add(pStart, scale(normal, -halfThick));
-                
-                const polyPath = `M ${sp1.x} ${sp1.y} L ${sp2.x} ${sp2.y} L ${sp3.x} ${sp3.y} L ${sp4.x} ${sp4.y} Z`;
+                const polyPath = `M ${subP1.x} ${subP1.y} L ${subP2.x} ${subP2.y} L ${subP3.x} ${subP3.y} L ${subP4.x} ${subP4.y} Z`;
 
                 return (
                     <g key={i}>
-                        {/* 1. Fill (White) */}
-                        <path d={polyPath} fill="white" className="dark:fill-slate-900" stroke="none" />
-                        
-                        {/* 2. Hatch Pattern */}
-                        <path d={polyPath} fill="url(#wall_hatch)" stroke="none" opacity="0.5"/>
-                        
-                        {/* 3. Selection Highlight */}
-                        {selected && <path d={polyPath} fill="#3b82f6" opacity="0.2" stroke="none" />}
-                        
-                        {/* 4. Stroke (Edging) with Mask */}
-                        <path 
-                            d={polyPath} 
-                            fill="none" 
-                            stroke={selected ? "#3b82f6" : "black"} 
-                            className={selected ? '' : 'dark:stroke-slate-200'}
-                            strokeWidth="1" 
-                            mask="url(#wall-cleaner)"
-                            vectorEffect="non-scaling-stroke"
-                        />
+                        {showFill && <path d={polyPath} fill="white" className="dark:fill-slate-900" stroke="none" shapeRendering="crispEdges" />}
+                        {showHatch && <path d={polyPath} fill={hatchUrl} stroke="none" opacity="0.5" />}
+                        {selected && showHatch && <path d={polyPath} fill="#3b82f6" opacity="0.2" stroke="none" />}
+                        {showStroke && (
+                            <path 
+                                d={polyPath} 
+                                fill="none" 
+                                stroke={selected ? "#3b82f6" : "black"} 
+                                className={selected ? '' : 'dark:stroke-slate-200'}
+                                strokeWidth="1" 
+                                mask="url(#wall-cleaner)"
+                                vectorEffect="non-scaling-stroke"
+                            />
+                        )}
                     </g>
                 );
             })}
@@ -317,8 +367,7 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
     );
 };
 
-// ... (OpeningEntity, StairEntity, DimensionEntity, LabelEntity, NorthArrowEntity, SymbolEntity, AutoDimensionEntity, generateLegendData - keep unchanged) ...
-
+// ... (Rest of the file remains unchanged) ...
 interface OpeningEntityProps { op: Opening; wall: Wall; selected: boolean; showLabel: boolean; }
 export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected, showLabel }) => {
     const x = wall.start.x + op.t * (wall.end.x - wall.start.x);

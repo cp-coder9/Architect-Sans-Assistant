@@ -5,19 +5,17 @@ import { WallEntity, OpeningEntity, StairEntity, LabelEntity, SymbolEntity, Dime
 import { renderToStaticMarkup } from 'react-dom/server';
 import { jsPDF } from 'jspdf';
 
-// A1 Dimensions in mm (Landscape) - Scaled for high res export but keeping aspect ratio
+// A1 Dimensions in mm (Landscape)
 const SHEET_WIDTH_MM = 841;
 const SHEET_HEIGHT_MM = 594;
 const SCALE_FACTOR = 10; 
 const SHEET_WIDTH = SHEET_WIDTH_MM * SCALE_FACTOR;
 const SHEET_HEIGHT = SHEET_HEIGHT_MM * SCALE_FACTOR;
 
-const TITLE_BLOCK_WIDTH = 120 * SCALE_FACTOR; // Widened
-const GENERAL_NOTES_WIDTH = 180 * SCALE_FACTOR; // Widened
-const MARGIN = 10 * SCALE_FACTOR;
+const TITLE_BLOCK_WIDTH = 130 * SCALE_FACTOR;
+const MARGIN = 15 * SCALE_FACTOR;
 
 export const generateSheetSvg = (data: PlanData) => {
-    // 1. Calculate Bounding Box
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
     if (data.walls.length === 0) {
@@ -30,23 +28,15 @@ export const generateSheetSvg = (data: PlanData) => {
             maxY = Math.max(maxY, w.start.y, w.end.y);
         });
         
-        // Include North Arrow
-        if (data.northArrow) {
-            minX = Math.min(minX, data.northArrow.position.x - 50);
-            maxX = Math.max(maxX, data.northArrow.position.x + 50);
-            minY = Math.min(minY, data.northArrow.position.y - 50);
-            maxY = Math.max(maxY, data.northArrow.position.y + 50);
-        }
-
+        // Ignore North Arrow for bounding box (fixed on sheet)
         minX -= 100; minY -= 100; maxX += 100; maxY += 100;
     }
 
     const planWidth = maxX - minX;
     const planHeight = maxY - minY;
     
-    // Calculate Drawing Area based on present features
-    const sideBarsWidth = TITLE_BLOCK_WIDTH + (data.metadata.generalNotes ? 20 * SCALE_FACTOR : 0);
-    const drawAreaW = SHEET_WIDTH - sideBarsWidth - (data.metadata.generalNotes ? GENERAL_NOTES_WIDTH : 0) - (MARGIN * 2);
+    // Calculate Drawing Area
+    const drawAreaW = SHEET_WIDTH - TITLE_BLOCK_WIDTH - (MARGIN * 3);
     const drawAreaH = SHEET_HEIGHT - (MARGIN * 2);
     
     const scaleX = drawAreaW / planWidth;
@@ -63,7 +53,18 @@ export const generateSheetSvg = (data: PlanData) => {
     const translateY = drawAreaCenterY - (planCenterY * fitScale);
     const planCenter = { x: planCenterX, y: planCenterY };
 
-    const legendItems = generateLegendData(data);
+    // --- Helper for Title Block Sections ---
+    const TitleBlockSection = ({ y, h, title, children }: any) => (
+        <g transform={`translate(0, ${y})`}>
+            <rect width={TITLE_BLOCK_WIDTH} height={h} fill="white" stroke="black" strokeWidth="3" />
+            <rect width={TITLE_BLOCK_WIDTH} height="35" fill="black" stroke="black" strokeWidth="1" />
+            <text x="15" y="24" fontSize="18" fontWeight="bold" fill="white" letterSpacing="2">{title}</text>
+            <g transform="translate(15, 60)">{children}</g>
+        </g>
+    );
+
+    const notesLines = data.metadata.generalNotes ? data.metadata.generalNotes.split('\n') : [];
+    const notesBoxHeight = Math.max(500, 150 + (notesLines.length * 60));
 
     const SvgSheet = () => (
         <svg
@@ -74,8 +75,10 @@ export const generateSheetSvg = (data: PlanData) => {
             className="font-sans"
         >
             <defs>
-                <pattern id="hatch_export" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                    <line x1="0" y1="0" x2="0" y2="10" stroke="#cbd5e1" strokeWidth="2" />
+                <pattern id="hatch_brick" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#94a3b8" strokeWidth="1" /></pattern>
+                <pattern id="hatch_drywall" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                    <line x1="0" y1="0" x2="4" y2="0" stroke="#cbd5e1" strokeWidth="1" />
+                    <line x1="0" y1="0" x2="0" y2="4" stroke="#cbd5e1" strokeWidth="1" />
                 </pattern>
                 <marker id="arrow_export" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
                     <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
@@ -98,11 +101,14 @@ export const generateSheetSvg = (data: PlanData) => {
             <rect x={0} y={0} width={SHEET_WIDTH} height={SHEET_HEIGHT} fill="white" />
             
             {/* Border */}
-            <rect x={MARGIN} y={MARGIN} width={SHEET_WIDTH - MARGIN*2} height={SHEET_HEIGHT - MARGIN*2} fill="none" stroke="black" strokeWidth="4" />
+            <rect x={MARGIN} y={MARGIN} width={SHEET_WIDTH - MARGIN*2} height={SHEET_HEIGHT - MARGIN*2} fill="none" stroke="black" strokeWidth="5" />
+
+            {/* Drawing Heading (Top Left) */}
+            <text x={MARGIN + 50} y={MARGIN + 120} fontSize="120" fontWeight="900" fill="#0f172a" style={{textTransform: 'uppercase', fontFamily: 'Arial Black, sans-serif'}} letterSpacing="2">
+                {data.metadata.drawingHeading || "FLOOR PLAN"}
+            </text>
 
             <g transform={`translate(${translateX}, ${translateY}) scale(${fitScale})`}>
-                {data.northArrow && <NorthArrowEntity arrow={data.northArrow} selected={false} />}
-
                 {data.walls.map(wall => {
                     const openings = data.openings.filter(o => o.wallId === wall.id);
                     return (
@@ -125,143 +131,98 @@ export const generateSheetSvg = (data: PlanData) => {
                 {data.dimensions.map(d => <DimensionEntity key={d.id} dim={d} selected={false} />)}
             </g>
 
-             {/* --- GENERAL NOTES BOX (Improved) --- */}
-             {data.metadata.generalNotes && (
-                <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - GENERAL_NOTES_WIDTH - MARGIN - 50}, ${MARGIN})`}>
-                        {/* Box Outline */}
-                        <rect x="0" y="0" width={GENERAL_NOTES_WIDTH} height={SHEET_HEIGHT - MARGIN*2} fill="white" stroke="black" strokeWidth="2" />
-                        
-                        {/* Header Background */}
-                        <rect x="0" y="0" width={GENERAL_NOTES_WIDTH} height="80" fill="#f1f5f9" stroke="none" />
-                        <line x1="0" y1="80" x2={GENERAL_NOTES_WIDTH} y2="80" stroke="black" strokeWidth="2" />
-                        
-                        <text x={GENERAL_NOTES_WIDTH/2} y="55" fontSize="28" fontWeight="bold" textAnchor="middle" letterSpacing="1">GENERAL NOTES</text>
-                        
-                        <g transform="translate(20, 120)">
-                            {data.metadata.generalNotes.split('\n').map((line, i) => (
-                                <text key={i} y={i * 35} fontSize="20" fontWeight="normal" fill="#1e293b" width={GENERAL_NOTES_WIDTH - 40} style={{fontFamily: 'monospace'}}>
-                                {line}
-                                </text>
-                            ))}
+            {/* Fixed North Arrow (Bottom Right of Drawing Area) */}
+            {data.northArrow && (
+                <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - MARGIN - 300}, ${SHEET_HEIGHT - MARGIN - 300}) scale(3.5)`}>
+                        <g transform={`rotate(${data.northArrow.rotation})`}>
+                        <circle r="30" fill="none" stroke="black" strokeWidth="2" />
+                        <path d="M 0 -25 L 10 0 L 0 25 L -10 0 Z" fill="black" />
+                        <text y="-35" textAnchor="middle" fontWeight="bold" fontSize="12" fill="black">N</text>
                         </g>
                 </g>
             )}
 
-            {/* --- TITLE BLOCK (Redesigned) --- */}
+            {/* General Notes (Bottom Left Overlay) */}
+            {data.metadata.generalNotes && (
+                <g transform={`translate(${MARGIN + 30}, ${SHEET_HEIGHT - MARGIN - notesBoxHeight - 50})`}>
+                    <rect width="2500" height={notesBoxHeight} fill="white" stroke="black" strokeWidth="4" />
+                    <text x="40" y="60" fontSize="42" fontWeight="bold" fill="black" textDecoration="underline">GENERAL NOTES</text>
+                    <g transform="translate(40, 130)">
+                        {notesLines.map((line, i) => (
+                            <text key={i} y={i * 60} fontSize="32" fontWeight="medium" fill="#1e293b" style={{fontFamily: 'monospace'}}>
+                                {line.length > 85 ? line.substring(0, 85) + '...' : line}
+                            </text>
+                        ))}
+                    </g>
+                </g>
+            )}
+
+            {/* Title Block (Right Side) */}
             <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - MARGIN}, ${MARGIN})`}>
-                {/* Outline */}
-                <rect width={TITLE_BLOCK_WIDTH} height={SHEET_HEIGHT - MARGIN*2} fill="white" stroke="black" strokeWidth="4" />
-
-                {/* 1. ARCHITECT / LOGO SECTION (Top) */}
+                {/* 1. Logo Block */}
                 <g transform="translate(0, 0)">
-                    {/* Logo Area */}
-                    <rect width={TITLE_BLOCK_WIDTH} height="350" fill="none" stroke="none" />
-                    
-                    {data.metadata.logo ? (
-                        <image href={data.metadata.logo} x="10" y="20" width={TITLE_BLOCK_WIDTH - 20} height="200" preserveAspectRatio="xMidYMid meet" />
-                    ) : (
-                        <g transform="translate(60, 120)">
-                            <text textAnchor="middle" fontSize="60" fontWeight="bold" letterSpacing="5">LOGO</text>
-                            <rect x="-100" y="-80" width="200" height="160" fill="none" stroke="#ccc" strokeDasharray="10,5" strokeWidth="2"/>
-                        </g>
-                    )}
-
-                    {/* Architect Details */}
-                    <g transform="translate(20, 250)">
-                        <text x="0" y="0" fontSize="24" fontWeight="bold" letterSpacing="1">ARCHITECT</text>
-                        <text x="0" y="30" fontSize="18" fill="#1e293b">Architecture Firm Inc.</text>
-                        <text x="0" y="55" fontSize="16" fill="#475569">123 Design Avenue</text>
-                        <text x="0" y="75" fontSize="16" fill="#475569">Johannesburg, 2000</text>
-                    </g>
+                        <rect width={TITLE_BLOCK_WIDTH} height="1200" fill="white" stroke="black" strokeWidth="3" />
+                        {data.metadata.logo ? (
+                        <image href={data.metadata.logo} x="50" y="50" width={TITLE_BLOCK_WIDTH - 100} height="500" preserveAspectRatio="xMidYMid meet" />
+                        ) : (
+                        <text x={TITLE_BLOCK_WIDTH/2} y="300" textAnchor="middle" fontSize="60" fill="#cbd5e1" fontWeight="bold">LOGO</text>
+                        )}
+                        <text x={TITLE_BLOCK_WIDTH/2} y="700" textAnchor="middle" fontSize="42" fontWeight="bold">ARCHITECT</text>
+                        <text x={TITLE_BLOCK_WIDTH/2} y="760" textAnchor="middle" fontSize="32" fill="#64748b">Architecture Firm Inc.</text>
+                        <text x={TITLE_BLOCK_WIDTH/2} y="810" textAnchor="middle" fontSize="32" fill="#64748b">JHB, South Africa</text>
                 </g>
 
-                <line x1="0" y1="350" x2={TITLE_BLOCK_WIDTH} y2="350" stroke="black" strokeWidth="3" />
-
-                {/* 2. PROJECT INFO */}
-                <g transform="translate(20, 390)">
-                    <text fontSize="18" fontWeight="bold" fill="#64748b" letterSpacing="1">PROJECT</text>
-                    <text y="40" fontSize="32" fontWeight="bold" width={TITLE_BLOCK_WIDTH - 40}>{data.metadata.title}</text>
-                    
-                    <g transform="translate(0, 80)">
-                        <text fontSize="18" fontWeight="bold" fill="#64748b" letterSpacing="1">CLIENT</text>
-                        <text y="30" fontSize="24" fontWeight="bold">{data.metadata.client}</text>
-                    </g>
-                    
-                    <g transform="translate(0, 150)">
-                        <text fontSize="18" fontWeight="bold" fill="#64748b" letterSpacing="1">SITE ADDRESS</text>
-                        <text y="30" fontSize="18" width={TITLE_BLOCK_WIDTH - 40}>{data.metadata.address}</text>
-                        <text y="55" fontSize="18">{data.metadata.erfNumber}</text>
-                    </g>
-                </g>
-                
-                <line x1="0" y1="650" x2={TITLE_BLOCK_WIDTH} y2="650" stroke="black" strokeWidth="2" />
-
-                {/* 3. CONSULTANTS (Grid) */}
-                <g transform="translate(20, 690)">
-                        <text fontSize="18" fontWeight="bold" fill="#64748b" letterSpacing="1">CONSULTANTS</text>
-                    {Object.entries(data.metadata.consultants).map(([role, name], i) => (
-                        <g key={i} transform={`translate(0, ${40 + i * 50})`}>
-                            <text fontSize="14" fontWeight="bold" fill="#000">{role.toUpperCase()}</text>
-                            <text y="20" fontSize="16" fill="#475569">{name}</text>
-                        </g>
-                    ))}
-                </g>
-                
-                <line x1="0" y1="1000" x2={TITLE_BLOCK_WIDTH} y2="1000" stroke="black" strokeWidth="2" />
-                
-                {/* 4. REVISIONS */}
-                <g transform="translate(0, 1000)">
-                        <rect width={TITLE_BLOCK_WIDTH} height="30" fill="#f1f5f9" />
-                        <text x="20" y="20" fontSize="14" fontWeight="bold">REVISIONS</text>
-                        <line x1="0" y1="30" x2={TITLE_BLOCK_WIDTH} y2="30" stroke="black" strokeWidth="1" />
+                {/* 2. Project Details */}
+                <TitleBlockSection y="1250" h="1200" title="PROJECT DETAILS">
+                        <text y="0" fontSize="24" fill="#94a3b8" fontWeight="bold">PROJECT TITLE</text>
+                        <text y="50" fontSize="48" fontWeight="bold">{data.metadata.title}</text>
                         
-                        <g transform="translate(20, 60)">
-                        <text fontSize="14" fontWeight="bold">{data.metadata.revision}</text>
-                        <text y="25" fontSize="12" fill="#64748b">{data.metadata.date}</text>
+                        <text y="150" fontSize="24" fill="#94a3b8" fontWeight="bold">CLIENT</text>
+                        <text y="200" fontSize="40" fontWeight="medium">{data.metadata.client}</text>
+                        
+                        <text y="300" fontSize="24" fill="#94a3b8" fontWeight="bold">SITE</text>
+                        <text y="350" fontSize="32" fontWeight="medium">{data.metadata.address}</text>
+                        <text y="400" fontSize="32" fontWeight="medium">{data.metadata.erfNumber}</text>
+                </TitleBlockSection>
+
+                {/* 3. Consultants */}
+                <TitleBlockSection y="2500" h="1000" title="CONSULTANTS">
+                        {Object.entries(data.metadata.consultants).map(([role, name], i) => (
+                        <g key={i} transform={`translate(0, ${i * 100})`}>
+                            <text fontSize="22" fontWeight="bold" fill="#000">{role}</text>
+                            <text y="35" fontSize="28" fill="#475569">{name}</text>
                         </g>
-                </g>
+                        ))}
+                </TitleBlockSection>
 
-                <line x1="0" y1="1200" x2={TITLE_BLOCK_WIDTH} y2="1200" stroke="black" strokeWidth="3" />
+                {/* 4. Revisions */}
+                <TitleBlockSection y="3550" h="800" title="REVISIONS">
+                        <text fontSize="32" fontWeight="bold">{data.metadata.revision}</text>
+                        <text y="50" fontSize="24" fill="#64748b">{data.metadata.date}</text>
+                </TitleBlockSection>
 
-                {/* 6. DRAWING META (Bottom) */}
-                <g transform={`translate(0, 1200)`}>
-                    
-                    <g transform="translate(20, 40)">
-                        <text fontSize="14" fontWeight="bold" fill="#64748b" letterSpacing="1">DRAWING TITLE</text>
-                        <text y="40" fontSize="48" fontWeight="bold" fill="#000">{data.metadata.drawingHeading}</text>
+                    {/* 5. Sheet Info (Bottom Block) */}
+                    <g transform="translate(0, 4400)">
+                        <rect width={TITLE_BLOCK_WIDTH} height={SHEET_HEIGHT - MARGIN*2 - 4400} fill="black" stroke="black" strokeWidth="3" />
+                        <text x={TITLE_BLOCK_WIDTH/2} y="250" textAnchor="middle" fontSize="220" fontWeight="bold" fill="white">{data.metadata.sheetNumber}</text>
+                        <text x={TITLE_BLOCK_WIDTH/2} y="400" textAnchor="middle" fontSize="48" fontWeight="bold" fill="#94a3b8" letterSpacing="5">SHEET NO</text>
+                        
+                        <line x1="50" y1="500" x2={TITLE_BLOCK_WIDTH - 50} y2="500" stroke="#333" strokeWidth="2" />
+
+                        {/* Mini Grid inside black block */}
+                        <g transform="translate(50, 600)">
+                            <text fontSize="24" fill="#94a3b8" fontWeight="bold">DATE</text>
+                            <text y="40" fontSize="36" fill="white" fontWeight="bold">{data.metadata.date}</text>
+                        </g>
+                        <g transform="translate(700, 600)">
+                            <text fontSize="24" fill="#94a3b8" fontWeight="bold">SCALE</text>
+                            <text y="40" fontSize="36" fill="white" fontWeight="bold">{data.metadata.scale}</text>
+                        </g>
+                        <g transform="translate(50, 800)">
+                            <text fontSize="24" fill="#94a3b8" fontWeight="bold">DRAWN BY</text>
+                            <text y="40" fontSize="36" fill="white" fontWeight="bold">{data.metadata.drawnBy}</text>
+                        </g>
                     </g>
-
-                    <line x1="0" y1="100" x2={TITLE_BLOCK_WIDTH} y2="100" stroke="black" strokeWidth="1" />
-                    
-                    {/* Metadata Grid */}
-                        <g transform="translate(20, 140)">
-                            <g>
-                                <text fontSize="12" fill="#64748b" fontWeight="bold" letterSpacing="1">DATE</text>
-                                <text y="20" fontSize="18" fontWeight="bold">{data.metadata.date}</text>
-                            </g>
-                            <g transform="translate(TITLE_BLOCK_WIDTH/2, 0)">
-                                <text fontSize="12" fill="#64748b" fontWeight="bold" letterSpacing="1">SCALE</text>
-                                <text y="20" fontSize="18" fontWeight="bold">{data.metadata.scale}</text>
-                            </g>
-                            
-                            <g transform="translate(0, 60)">
-                                <text fontSize="12" fill="#64748b" fontWeight="bold" letterSpacing="1">DRAWN BY</text>
-                                <text y="20" fontSize="18" fontWeight="bold">{data.metadata.drawnBy}</text>
-                            </g>
-                            <g transform="translate(TITLE_BLOCK_WIDTH/2, 60)">
-                                <text fontSize="12" fill="#64748b" fontWeight="bold" letterSpacing="1">CHECKED</text>
-                                <text y="20" fontSize="18" fontWeight="bold">ARCH</text>
-                            </g>
-                        </g>
-                        
-                        <line x1="0" y1="240" x2={TITLE_BLOCK_WIDTH} y2="240" stroke="black" strokeWidth="3" />
-
-                        {/* Big Sheet Number */}
-                        <rect x="0" y="240" width={TITLE_BLOCK_WIDTH} height={SHEET_HEIGHT - MARGIN*2 - 1440} fill="none" />
-                        
-                        <text x={TITLE_BLOCK_WIDTH/2} y="400" fontSize="180" fontWeight="bold" textAnchor="middle" fill="#000">{data.metadata.sheetNumber}</text>
-                        <text x={TITLE_BLOCK_WIDTH/2} y="440" fontSize="24" fontWeight="bold" textAnchor="middle" fill="#64748b" letterSpacing="2">SHEET NO.</text>
-                </g>
             </g>
         </svg>
     );

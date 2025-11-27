@@ -4,7 +4,7 @@ import { PlanData, ToolType, Point, Wall, Opening, RoomLabel, Dimension, LayerCo
 import { X, Settings2, Scissors, Lock, Unlock, RotateCw, FlipHorizontal, FlipVertical, Trash2, Move, MousePointer2, CheckCircle2, AlertCircle, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { dist, sub, add, scale, norm, dot } from '../utils/geometry';
 import { getSnapPoint, SnapGuide, GRID_SIZE } from '../utils/snapping';
-import { WallEntity, OpeningEntity, StairEntity, DimensionEntity, LabelEntity, NorthArrowEntity, SymbolEntity, SYMBOL_CATALOG, AutoDimensionEntity, generateLegendData, getWallPath } from './CanvasEntities';
+import { WallEntity, OpeningEntity, StairEntity, DimensionEntity, LabelEntity, NorthArrowEntity, SymbolEntity, SYMBOL_CATALOG, AutoDimensionEntity, generateLegendData, getWallPath, getWallOutlinePath } from './CanvasEntities';
 
 interface CanvasEditorProps {
   data: PlanData;
@@ -469,6 +469,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
   };
 
   const handleMouseMove = (e: React.MouseEvent | React.TouchEvent) => {
+    // ... (unchanged) ...
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
 
@@ -482,13 +483,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
     
     const worldPos = toWorld(clientX, clientY);
 
-    // MAGNETIC SNAP LOGIC
-    // We calculate the snap point immediately and update currentMousePos to match it.
-    // This makes the cursor/ghost-object "jump" to the snap point visually.
     const snapRes = getSnapPoint(worldPos, zoom, data.walls, data.openings, drawingStart, dragState?.activeId ? [dragState.activeId] : []);
-    
-    // IMPORTANT: Set currentMousePos to the SNAPPED point, not the raw worldPos
-    // This drives the visual feedback to be magnetic
     setCurrentMousePos(snapRes.point);
 
     const snappedPos = snapRes.point;
@@ -497,6 +492,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
     setSnapType(snapRes.snapType);
 
     if (dragState) {
+        // ... (unchanged drag logic) ...
         if (dragState.type === 'move_selection' || dragState.type === 'north_arrow') {
             const dx = snappedPos.x - dragState.startPos.x;
             const dy = snappedPos.y - dragState.startPos.y;
@@ -541,21 +537,13 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
              });
              onUpdate({ ...data, walls: newWalls });
         } else if (dragState.type === 'wall_curve' && dragState.activeId) {
-             // Curve editing logic: Calculate distance from chord to mouse pos
              const wall = data.walls.find(w => w.id === dragState.activeId);
              if (wall) {
-                 // The math for curvature control:
-                 // Curvature value = distance from chord midpoint to curve midpoint
-                 // We find projection of mouse onto the line perpendicular to wall chord at midpoint
                  const mid = scale(add(wall.start, wall.end), 0.5);
                  const dir = norm(sub(wall.end, wall.start));
                  const normal = { x: -dir.y, y: dir.x };
-                 
-                 // Vector from mid to mouse
                  const toMouse = sub(worldPos, mid);
-                 // Project to normal
                  const curv = dot(toMouse, normal);
-                 
                  const newWalls = data.walls.map(w => w.id === wall.id ? { ...w, curvature: curv } : w);
                  onUpdate({ ...data, walls: newWalls });
              }
@@ -576,6 +564,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
   };
 
   const handleMouseUp = () => {
+    // ... (unchanged) ...
     if (isPanning) {
       setIsPanning(false);
       setLastPanPoint(null);
@@ -583,7 +572,6 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
     }
 
     if (drawingStart && currentMousePos) {
-       // Snap handled in move, currentMousePos is already snapped
        const endPos = currentMousePos;
        
        if (dist(drawingStart, endPos) > 2) {
@@ -645,13 +633,12 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                applySplit(checkAndSplit(newWall.end, currentWalls));
 
                onUpdate({ ...data, walls: currentWalls, openings: currentOps });
-               setDrawingStart(null); // Stop chaining - force click per wall segment
+               setDrawingStart(null); 
 
            } else if (tool === ToolType.SQUARE_ROOM) {
                const groupId = crypto.randomUUID();
                const x1 = drawingStart.x, y1 = drawingStart.y;
                const x2 = endPos.x, y2 = endPos.y;
-               // Order points to keep width/height positive for logic if needed, but geometry functions handle negatives fine
                
                const w1 = { id: crypto.randomUUID(), groupId, start: {x:x1, y:y1}, end: {x:x2, y:y1}, thickness: activeWallThickness, height: 2700 };
                const w2 = { id: crypto.randomUUID(), groupId, start: {x:x2, y:y1}, end: {x:x2, y:y2}, thickness: activeWallThickness, height: 2700 };
@@ -682,7 +669,6 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
        }
     }
     
-    // Check for dimension overlaps after any move
     if (dragState && (dragState.type === 'move_selection' || dragState.type === 'wall_endpoint')) {
         const resolvedDims = resolveDimensionOverlaps(data.dimensions);
         const hasChanged = resolvedDims.some((d, i) => d.offset !== data.dimensions[i].offset);
@@ -696,17 +682,13 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
 
   const handleContextMenu = (e: React.MouseEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       const worldPos = toWorld(e.clientX, e.clientY);
-      
-      // Hit test to see what we clicked on
       const { hitId, hitType } = getHitItem(worldPos);
-      
       if (hitId) {
-          // Select it immediately if not already selected
           if (!selection.has(hitId)) {
              setSelection(new Set([hitId]));
           }
-          
           setContextMenu({
                x: e.clientX,
                y: e.clientY,
@@ -718,21 +700,21 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
   };
 
   const handleDelete = () => {
+      // ... (unchanged) ...
       if (selection.size === 0) return;
-      
       const newWalls = data.walls.filter(w => !selection.has(w.id));
       const newOpenings = data.openings.filter(o => !selection.has(o.id) && !selection.has(o.wallId));
       const newLabels = data.labels.filter(l => !selection.has(l.id));
       const newStairs = data.stairs.filter(s => !selection.has(s.id));
       const newDims = data.dimensions.filter(d => !selection.has(d.id));
       const newSymbols = data.symbols.filter(s => !selection.has(s.id));
-      
       onUpdate({ ...data, walls: newWalls, openings: newOpenings, labels: newLabels, stairs: newStairs, dimensions: newDims, symbols: newSymbols });
       setSelection(new Set());
       setContextMenu(null);
   };
   
   const handleSplitWall = (wallId: string, point: Point) => {
+      // ... (unchanged) ...
       const wall = data.walls.find(w => w.id === wallId);
       if (!wall) return;
       const newId = crypto.randomUUID();
@@ -750,9 +732,8 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
       onUpdate({ ...data, walls: [...otherWalls, wall1, wall2], openings: [...otherOpenings, ...openings1, ...openings2] });
   };
 
-  // --- Quick Actions Floating Toolbar ---
   const renderQuickActions = () => {
-      // 1. Drawing Wall State
+      // ... (unchanged) ...
       if (drawingStart && currentMousePos && (tool === ToolType.WALL || tool === ToolType.ARCH_WALL)) {
           const length = dist(drawingStart, currentMousePos) * 10;
           const pxPos = {
@@ -765,15 +746,12 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
               </div>
           );
       }
-
-      // 2. Placing Door/Window State
       if (tool === ToolType.DOOR || tool === ToolType.WINDOW) {
           if (!currentMousePos) return null;
           const pxPos = {
               x: (currentMousePos.x * zoom) + pan.x + (wrapperRef.current?.getBoundingClientRect().left || 0),
               y: (currentMousePos.y * zoom) + pan.y + (wrapperRef.current?.getBoundingClientRect().top || 0) + 40
           };
-          // Hints
           return (
               <div className="fixed z-50 flex gap-2" style={{ left: pxPos.x - 50, top: pxPos.y }}>
                    <div className="bg-white dark:bg-slate-800 shadow-lg border border-slate-200 dark:border-slate-700 rounded-lg p-1 flex gap-1">
@@ -782,27 +760,20 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
               </div>
           );
       }
-
-      // 3. Selection State (Floating Action Bar above object)
       if (selection.size === 1 && !isPanning && !dragState) {
           const id = Array.from(selection)[0];
           let objPos: Point | null = null;
-          
           const w = data.walls.find(x => x.id === id);
           if (w) objPos = scale(add(w.start, w.end), 0.5);
-          
           const op = data.openings.find(x => x.id === id);
           if (op) {
               const wall = data.walls.find(x => x.id === op.wallId);
               if (wall) objPos = add(wall.start, scale(sub(wall.end, wall.start), op.t));
           }
-
           const sym = data.symbols.find(x => x.id === id);
           if (sym) objPos = sym.position;
-
           const stair = data.stairs.find(x => x.id === id);
           if (stair) objPos = stair.position;
-
           const label = data.labels.find(x => x.id === id);
           if (label) objPos = label.position;
 
@@ -830,19 +801,19 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                                 <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                                 <button onClick={() => onUpdate({...data, openings: data.openings.map(o => o.id === id ? {...o, flipX: !o.flipX} : o)})} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 rounded-full" title="Flip Horizontal"><FlipHorizontal size={16}/></button>
                                 <button onClick={() => onUpdate({...data, openings: data.openings.map(o => o.id === id ? {...o, flipY: !o.flipY} : o)})} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 rounded-full" title="Flip Vertical"><FlipVertical size={16}/></button>
-                               </>
+                                </>
                            )}
                            {sym && (
                                <>
                                 <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                                 <button onClick={() => onUpdate({...data, symbols: data.symbols.map(s => s.id === id ? {...s, rotation: (s.rotation + 45) % 360} : s)})} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 rounded-full" title="Rotate"><RotateCw size={16}/></button>
-                               </>
+                                </>
                            )}
                            {stair && (
                                <>
                                 <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                                 <button onClick={() => onUpdate({...data, stairs: data.stairs.map(s => s.id === id ? {...s, rotation: (s.rotation + 90) % 360} : s)})} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 rounded-full" title="Rotate"><RotateCw size={16}/></button>
-                               </>
+                                </>
                            )}
                            {w && (
                                <>
@@ -862,6 +833,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
   };
 
   const renderPropertiesPanel = () => {
+    // ... (unchanged) ...
     if (selection.size !== 1) return null;
       const id = Array.from(selection)[0];
       const wall = data.walls.find(w => w.id === id);
@@ -969,7 +941,10 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
 
       {editInput && (<div className="absolute z-50" style={{ left: editInput.x, top: editInput.y }}><BufferedInput value={editInput.value} onChange={editInput.onSave} className="bg-white dark:bg-slate-800 border border-blue-500 rounded px-2 py-1 text-sm shadow-xl outline-none w-24 text-slate-900 dark:text-white"/></div>)}
 
-      <div className="border border-slate-300 dark:border-slate-700 w-full h-full relative bg-slate-50 dark:bg-slate-800 shadow-inner cursor-crosshair overflow-hidden">
+      <div 
+        className="border border-slate-300 dark:border-slate-700 w-full h-full relative bg-slate-50 dark:bg-slate-800 shadow-inner cursor-crosshair overflow-hidden"
+        onContextMenu={handleContextMenu}
+      >
           <svg 
             ref={svgRef} 
             width="100%" 
@@ -978,7 +953,6 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
-            onContextMenu={handleContextMenu}
             onTouchStart={handleMouseDown}
             onTouchMove={handleMouseMove}
             onTouchEnd={handleMouseUp}
@@ -988,8 +962,14 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                    <pattern id="grid" width={GRID_SIZE * zoom} height={GRID_SIZE * zoom} patternUnits="userSpaceOnUse">
                        <path d={`M ${GRID_SIZE * zoom} 0 L 0 0 0 ${GRID_SIZE * zoom}`} fill="none" stroke="currentColor" strokeWidth="0.5" className="text-slate-200 dark:text-slate-700" />
                    </pattern>
-                   <pattern id="wall_hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                       <line x1="0" y1="0" x2="0" y2="4" stroke="#94a3b8" strokeWidth="1" />
+                   {/* Brick Hatch */}
+                   <pattern id="hatch_brick" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                       <line x1="0" y1="0" x2="0" y2="6" stroke="#94a3b8" strokeWidth="1" />
+                   </pattern>
+                   {/* Drywall Hatch (Cross) */}
+                   <pattern id="hatch_drywall" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                        <line x1="0" y1="0" x2="4" y2="0" stroke="#cbd5e1" strokeWidth="1" />
+                        <line x1="0" y1="0" x2="0" y2="4" stroke="#cbd5e1" strokeWidth="1" />
                    </pattern>
                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
                         <path d="M0,0 L0,6 L9,3 z" fill="#475569" />
@@ -999,11 +979,9 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                        {data.walls.map((w: Wall) => (
                            <path 
                                key={w.id} 
-                               d={getWallPath(w)} 
-                               stroke="black" 
-                               strokeWidth={Math.max(0.1, w.thickness - 2)} 
-                               fill="none" 
-                               strokeLinecap="square"
+                               d={getWallOutlinePath(w, data.walls)} 
+                               fill="black" 
+                               stroke="none"
                            />
                        ))}
                    </mask>
@@ -1014,9 +992,28 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
               <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
                   {data.northArrow && <NorthArrowEntity arrow={data.northArrow} selected={selection.has("NORTH_ARROW")} />}
 
+                  {/* LAYER 1: FILLS */}
                   {layers.showWalls && data.walls.map(wall => {
                       const openings = data.openings.filter(o => o.wallId === wall.id);
-                      return <WallEntity key={wall.id} wall={wall} openings={openings} selected={selection.has(wall.id)} allWalls={data.walls} />;
+                      return <WallEntity key={`fill-${wall.id}`} wall={wall} openings={openings} selected={selection.has(wall.id)} allWalls={data.walls} layer="fill" onMouseDown={(e) => {
+                          if (tool === ToolType.SELECT) {
+                              setSelection(new Set([wall.id]));
+                              // Trigger default handler to setup drag state
+                              handleMouseDown(e);
+                          }
+                      }} />;
+                  })}
+
+                  {/* LAYER 2: HATCHES */}
+                  {layers.showWalls && data.walls.map(wall => {
+                      const openings = data.openings.filter(o => o.wallId === wall.id);
+                      return <WallEntity key={`hatch-${wall.id}`} wall={wall} openings={openings} selected={selection.has(wall.id)} allWalls={data.walls} layer="hatch" />;
+                  })}
+
+                  {/* LAYER 3: STROKES & DETAILS */}
+                  {layers.showWalls && data.walls.map(wall => {
+                      const openings = data.openings.filter(o => o.wallId === wall.id);
+                      return <WallEntity key={`stroke-${wall.id}`} wall={wall} openings={openings} selected={selection.has(wall.id)} allWalls={data.walls} layer="stroke" />;
                   })}
                   
                   {layers.showOpenings && data.openings.map(op => {
@@ -1028,7 +1025,7 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>(({ data, tool, vi
                   {layers.showStairs && data.stairs.map(s => <StairEntity key={s.id} stair={s} selected={selection.has(s.id)} />)}
                   {layers.showSymbols && data.symbols.map(s => <SymbolEntity key={s.id} symbol={s} selected={selection.has(s.id)} />)}
 
-                  {layers.showDimensions && data.dimensions.map(d => <DimensionEntity key={d.id} dim={d} selected={selection.has(d.id)} />)}
+                  {layers.showDimensions && data.dimensions.map(d => <DimensionEntity key={d.id} dim={d} selected={false} />)}
                   {layers.showDimensions && data.walls.map(w => {
                        const openings = data.openings.filter(o => o.wallId === w.id);
                        return <AutoDimensionEntity key={`auto-${w.id}`} wall={w} openings={openings} planCenter={planCenter} />;
