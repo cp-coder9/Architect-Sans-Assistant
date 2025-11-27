@@ -5,8 +5,8 @@ import { Toolbar } from './components/Toolbar';
 import { ElevationView } from './components/ElevationView';
 import { SheetPreview } from './components/SheetPreview';
 import { ToolType, PlanData, ViewMode, ProjectMetadata, LayerConfig, AIProvider, AISettings } from './types';
-import { analyzeFloorPlanImage, checkSansCompliance } from './services/aiService';
-import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck, Settings, FileText, ClipboardList, UserSquare2 } from 'lucide-react';
+import { analyzeFloorPlanImage, checkSansCompliance, modifyFloorPlan } from './services/aiService';
+import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck, Settings, FileText, ClipboardList, UserSquare2, Sparkles, Send } from 'lucide-react';
 import { SYMBOL_CATALOG } from './components/CanvasEntities';
 import { exportAsPdf, exportAsPng, exportAsSvg } from './components/SheetExporter';
 
@@ -118,9 +118,12 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.PLAN);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState("Processing...");
   const [complianceReport, setComplianceReport] = useState<string | null>(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [isMetadataOpen, setIsMetadataOpen] = useState(false);
+  const [isAIEditOpen, setIsAIEditOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
   const [metadataTab, setMetadataTab] = useState<'project' | 'sheet' | 'consultants' | 'notes'>('project');
 
   const [layers, setLayers] = useState<LayerConfig>(INITIAL_LAYERS);
@@ -146,6 +149,7 @@ export default function App() {
         return;
     }
 
+    setLoadingText("Analyzing Floor Plan...");
     setIsLoading(true);
     const reader = new FileReader();
     reader.onloadend = async () => {
@@ -187,11 +191,44 @@ export default function App() {
         setIsSettingsOpen(true);
         return;
     }
+    setLoadingText("Checking Compliance...");
     setIsLoading(true);
     const report = await checkSansCompliance(planData, aiSettings);
     setComplianceReport(report);
     setIsReportOpen(true);
     setIsLoading(false);
+  };
+
+  const handleAIEdit = async () => {
+    if (!aiPrompt.trim()) return;
+    if (!aiSettings.apiKey) {
+        alert("Please configure an API Key in Settings first.");
+        setIsSettingsOpen(true);
+        return;
+    }
+    setLoadingText("Modifying Plan...");
+    setIsLoading(true);
+    try {
+        const modified = await modifyFloorPlan(planData, aiPrompt, aiSettings);
+        // Merge modifications
+        updatePlanData({
+            ...planData,
+            walls: modified.walls || planData.walls,
+            openings: modified.openings || planData.openings,
+            labels: modified.labels || planData.labels,
+            stairs: modified.stairs || planData.stairs,
+            // Keep existing metadata/symbols unless we specifically handle them in future
+            symbols: planData.symbols, 
+            northArrow: planData.northArrow,
+            metadata: planData.metadata
+        });
+        setAiPrompt("");
+        setIsAIEditOpen(false);
+    } catch (err) {
+        alert(`AI Modification failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+        setIsLoading(false);
+    }
   };
 
   const handleSaveProject = () => {
@@ -438,6 +475,7 @@ export default function App() {
                 onRedo={handleRedo}
                 canUndo={currentStep > 0}
                 canRedo={currentStep < history.length - 1}
+                onAIEdit={() => setIsAIEditOpen(true)}
                 
                 activeSymbolId={activeSymbolId}
                 onSymbolSelect={setActiveSymbolId}
@@ -520,6 +558,40 @@ export default function App() {
                       <div className="p-4 border-t dark:border-slate-700 flex justify-end gap-2">
                           <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded">Cancel</button>
                           <button onClick={() => { saveAiSettings(aiSettings); setIsSettingsOpen(false); }} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Settings</button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* AI Edit Modal */}
+          {isAIEditOpen && (
+              <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-white dark:bg-slate-900 rounded-lg shadow-2xl w-full max-w-lg animate-in fade-in zoom-in-95 duration-200">
+                      <div className="p-4 border-b dark:border-slate-700 flex justify-between items-center bg-gradient-to-r from-purple-600 to-blue-600 rounded-t-lg">
+                          <h2 className="font-bold text-white flex items-center gap-2"><Sparkles size={18} /> AI Architect</h2>
+                          <button onClick={() => setIsAIEditOpen(false)} className="text-white/80 hover:text-white">✕</button>
+                      </div>
+                      <div className="p-6">
+                          <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+                              Describe how you want to modify the plan. You can ask to move walls, add rooms, or check compliance.
+                          </p>
+                          <textarea 
+                              value={aiPrompt}
+                              onChange={(e) => setAiPrompt(e.target.value)}
+                              placeholder="e.g. 'Make the living room larger', 'Add a bathroom next to the bedroom', 'Ensure windows are SANS compliant'"
+                              className="w-full h-32 border border-slate-300 dark:border-slate-600 rounded p-3 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-purple-500 outline-none resize-none"
+                              autoFocus
+                          />
+                      </div>
+                      <div className="p-4 border-t dark:border-slate-700 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-b-lg">
+                          <button onClick={() => setIsAIEditOpen(false)} className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-sm font-medium">Cancel</button>
+                          <button 
+                            onClick={handleAIEdit} 
+                            disabled={!aiPrompt.trim()}
+                            className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Send size={16} /> Generate Changes
+                          </button>
                       </div>
                   </div>
               </div>
@@ -727,7 +799,7 @@ export default function App() {
           {isLoading && (
             <div className="absolute inset-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur flex flex-col items-center justify-center text-slate-800 dark:text-white">
               <Loader2 className="animate-spin mb-4 text-blue-600" size={48} />
-              <p className="font-medium">Processing...</p>
+              <p className="font-medium animate-pulse">{loadingText}</p>
             </div>
           )}
         </div>

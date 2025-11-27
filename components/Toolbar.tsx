@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Square, DoorOpen, LayoutTemplate, Type, MousePointer2, Ruler, Download, ShieldCheck, FileSignature, Undo2, Redo2, BoxSelect, Spline, Scaling, Footprints, Armchair, RectangleHorizontal, BrickWall, BookOpen, GalleryVertical, Maximize, Minimize, ArrowLeftRight, FileImage, FileType, Hand } from 'lucide-react';
+import { Square, DoorOpen, LayoutTemplate, Type, MousePointer2, Ruler, Download, ShieldCheck, FileSignature, Undo2, Redo2, BoxSelect, Spline, Scaling, Footprints, Armchair, RectangleHorizontal, BrickWall, BookOpen, GalleryVertical, Maximize, Minimize, ArrowLeftRight, FileImage, FileType, Hand, Sparkles } from 'lucide-react';
 import { ToolType } from '../types';
 import { SYMBOL_CATALOG } from './CanvasEntities';
 
@@ -17,6 +17,8 @@ interface ToolbarProps {
   canUndo: boolean;
   canRedo: boolean;
   
+  onAIEdit: () => void;
+
   activeSymbolId: string;
   onSymbolSelect: (id: string) => void;
   activeSymbolCategory: string;
@@ -44,6 +46,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onRedo,
   canUndo,
   canRedo,
+  onAIEdit,
   activeSymbolId,
   onSymbolSelect,
   activeSymbolCategory,
@@ -136,6 +139,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
             {/* Actions Group */}
             <div className="flex items-center gap-1 pl-2 border-l border-slate-200 dark:border-slate-700 shrink-0 relative">
+                <button onClick={onAIEdit} className="p-2 rounded-xl hover:bg-purple-100 dark:hover:bg-purple-900/30 text-purple-600 dark:text-purple-400" title="AI Edit">
+                    <Sparkles size={20} />
+                </button>
                 <button onClick={onEditMetadata} className="p-2 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400" title="Project Info">
                     <FileSignature size={20} />
                 </button>
