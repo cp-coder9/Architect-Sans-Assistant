@@ -88,6 +88,8 @@ export interface SymbolInstance {
   position: Point;
   rotation: number;
   scale: number;
+  width?: number; // Override catalog width
+  height?: number; // Override catalog height
   locked?: boolean;
   groupId?: string;
 }
@@ -95,6 +97,16 @@ export interface SymbolInstance {
 export interface NorthArrow {
   position: Point;
   rotation: number; // Degrees
+}
+
+export interface BackgroundImage {
+  url: string; // Base64 data
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  locked?: boolean;
 }
 
 export interface ProjectMetadata {
@@ -123,6 +135,7 @@ export interface PlanData {
   symbols: SymbolInstance[];
   metadata: ProjectMetadata;
   northArrow: NorthArrow;
+  background?: BackgroundImage;
 }
 
 export enum ViewMode {
@@ -140,6 +153,7 @@ export interface LayerConfig {
   showOpenings: boolean;
   showStairs: boolean;
   showSymbols: boolean;
+  showBackground: boolean;
 }
 
 export enum AIProvider {
@@ -156,4 +170,22 @@ export interface AISettings {
   apiKey: string;
   baseUrl: string;
   model: string;
+}
+
+export interface DragState {
+    type: 'wall_endpoint' | 'wall_curve' | 'opening' | 'move_selection' | 'stair' | 'north_arrow' | 'north_arrow_rotate' | 'resize_symbol' | 'resize_opening' | 'resize_background' | 'move_background' | 'pan' | 'new_wall';
+    activeId?: string; 
+    endpointType?: 'start' | 'end';
+    handle?: 'tl' | 'tr' | 'bl' | 'br' | 'start' | 'end'; // for resizing
+    startPos: Point;
+    initialPos?: Point; 
+    initialSize?: { w: number, h: number };
+    initialRotation?: number; 
+    snapshots: {
+        walls: { id: string, start: Point, end: Point }[];
+        labels: { id: string, position: Point }[];
+        stairs: { id: string, position: Point }[];
+        dimensions: { id: string, start: Point, end: Point, offset: number }[];
+        openings: { id: string, t: number, wallId: string }[];
+    }
 }

@@ -13,6 +13,7 @@ const SHEET_WIDTH = SHEET_WIDTH_MM * SCALE_FACTOR;
 const SHEET_HEIGHT = SHEET_HEIGHT_MM * SCALE_FACTOR;
 
 const TITLE_BLOCK_WIDTH = 130 * SCALE_FACTOR;
+const LEGEND_WIDTH = 160 * SCALE_FACTOR;
 const MARGIN = 15 * SCALE_FACTOR;
 
 export const generateSheetSvg = (data: PlanData) => {
@@ -36,7 +37,7 @@ export const generateSheetSvg = (data: PlanData) => {
     const planHeight = maxY - minY;
     
     // Calculate Drawing Area
-    const drawAreaW = SHEET_WIDTH - TITLE_BLOCK_WIDTH - (MARGIN * 3);
+    const drawAreaW = SHEET_WIDTH - TITLE_BLOCK_WIDTH - LEGEND_WIDTH - (MARGIN * 4);
     const drawAreaH = SHEET_HEIGHT - (MARGIN * 2);
     
     const scaleX = drawAreaW / planWidth;
@@ -52,6 +53,8 @@ export const generateSheetSvg = (data: PlanData) => {
     const translateX = drawAreaCenterX - (planCenterX * fitScale);
     const translateY = drawAreaCenterY - (planCenterY * fitScale);
     const planCenter = { x: planCenterX, y: planCenterY };
+
+    const legendData = generateLegendData(data);
 
     // --- Helper for Title Block Sections ---
     const TitleBlockSection = ({ y, h, title, children }: any) => (
@@ -133,7 +136,7 @@ export const generateSheetSvg = (data: PlanData) => {
 
             {/* Fixed North Arrow (Bottom Right of Drawing Area) */}
             {data.northArrow && (
-                <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - MARGIN - 300}, ${SHEET_HEIGHT - MARGIN - 300}) scale(3.5)`}>
+                <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - LEGEND_WIDTH - MARGIN - 300}, ${SHEET_HEIGHT - MARGIN - 300}) scale(3.5)`}>
                         <g transform={`rotate(${data.northArrow.rotation})`}>
                         <circle r="30" fill="none" stroke="black" strokeWidth="2" />
                         <path d="M 0 -25 L 10 0 L 0 25 L -10 0 Z" fill="black" />
@@ -154,6 +157,23 @@ export const generateSheetSvg = (data: PlanData) => {
                             </text>
                         ))}
                     </g>
+                </g>
+            )}
+
+            {/* Object Legend (Top Right of Draw Area) */}
+            {legendData.length > 0 && (
+                <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - MARGIN - LEGEND_WIDTH}, ${MARGIN})`}>
+                    <rect width={LEGEND_WIDTH} height={100 + legendData.length * 80} fill="white" stroke="black" strokeWidth="3" />
+                    <rect width={LEGEND_WIDTH} height="80" fill="black" />
+                    <text x={LEGEND_WIDTH/2} y="55" textAnchor="middle" fill="white" fontSize="42" fontWeight="bold" letterSpacing="5">LEGEND</text>
+                    
+                    {legendData.map((item, i) => (
+                        <g key={i} transform={`translate(0, ${100 + i * 80})`}>
+                            <line x1="0" y1="-20" x2={LEGEND_WIDTH} y2="-20" stroke="#cbd5e1" strokeWidth="2" />
+                            <text x="40" y="30" fontSize="32" fontWeight="bold" fill="black">{item.code}</text>
+                            <text x="300" y="30" fontSize="32" fill="#334155">{item.description}</text>
+                        </g>
+                    ))}
                 </g>
             )}
 

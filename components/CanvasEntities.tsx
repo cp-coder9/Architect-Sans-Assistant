@@ -1,7 +1,12 @@
-
 import React, { useMemo } from 'react';
 import { Wall, Opening, Stair, Dimension, RoomLabel, StairType, NorthArrow, SymbolInstance, PlanData, Point } from '../types';
 import { dist, sub, add, scale, norm, len, dot, intersectInfiniteLines, getSegmentClippedByPolygons } from '../utils/geometry';
+
+// --- Components ---
+
+export const ResizeHandle = ({ x, y, cursor = 'cursor-pointer' }: { x: number, y: number, cursor?: string }) => (
+    <circle cx={x} cy={y} r={5} fill="#3b82f6" stroke="white" strokeWidth={2} className={`${cursor} hover:scale-125 transition-transform pointer-events-none`} />
+);
 
 // --- Symbol Catalog Definition ---
 export interface SymbolDef {
@@ -42,18 +47,107 @@ export const SYMBOL_CATALOG: SymbolDef[] = [
     { id: 'wardrobe', category: 'furniture', label: 'Wardrobe', width: 1200, height: 600, render: (w, h) => (
         <g><rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" /><line x1={0} y1={-h/2} x2={0} y2={h/2} stroke="currentColor" /><path d={`M ${-w/2+20} ${-h/2} L ${w/2-20} ${h/2}`} stroke="currentColor" strokeDasharray="4,4" opacity="0.3"/></g>
     )},
-    { id: 'toilet', category: 'plumbing', label: 'Toilet', width: 400, height: 650, render: (w, h) => (
-        <g><rect x={-200} y={-325} width={400} height={200} fill="none" stroke="currentColor" /><ellipse cx={0} cy={100} rx={180} ry={225} fill="none" stroke="currentColor" /></g>
-    )},
-    { id: 'bath_rect', category: 'plumbing', label: 'Bath', width: 1700, height: 750, render: (w, h) => (
+    
+    // Plumbing - Baths
+    { id: 'bath_rect', category: 'plumbing', label: 'Recessed Bath', width: 1700, height: 750, render: (w, h) => (
         <g><rect x={-w/2} y={-h/2} width={w} height={h} rx="10" fill="none" stroke="currentColor" /><rect x={-w/2+50} y={-h/2+50} width={w-100} height={h-100} rx="50" fill="none" stroke="currentColor" /><circle cx={-w/2+150} cy={0} r={30} fill="none" stroke="currentColor" /></g>
     )},
-    { id: 'sink_vanity', category: 'plumbing', label: 'Vanity Sink', width: 600, height: 500, render: (w, h) => (
-        <g><rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" /><circle cx={0} cy={0} r={180} fill="none" stroke="currentColor" /><rect x={-20} y={-h/2} width={40} height={50} fill="currentColor" /></g>
+    { id: 'bath_corner_round', category: 'plumbing', label: 'Corner Bath (Round)', width: 1500, height: 1500, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${0} A ${w/2} ${h/2} 0 0 1 ${0} ${h/2} L ${-w/2} ${h/2} Z`} fill="none" stroke="currentColor" />
+            <path d={`M ${-w/2+100} ${-h/2+100} L ${w/2-100} ${-h/2+100} L ${w/2-100} ${0} A ${w/2-100} ${h/2-100} 0 0 1 ${0} ${h/2-100} L ${-w/2+100} ${h/2-100} Z`} fill="none" stroke="currentColor" />
+        </g>
     )},
+    { id: 'bath_angle', category: 'plumbing', label: 'Corner Bath (Angle)', width: 1500, height: 1500, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${0} L ${0} ${h/2} L ${-w/2} ${h/2} Z`} fill="none" stroke="currentColor" />
+             <ellipse cx={0} cy={-100} rx={w/2.5} ry={h/3} transform="rotate(-45)" fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'bath_whirlpool', category: 'plumbing', label: 'Whirlpool Bath', width: 1800, height: 1000, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" />
+            <ellipse cx={0} cy={0} rx={w/2 - 100} ry={h/2 - 100} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'bath_island', category: 'plumbing', label: 'Island Bath', width: 1800, height: 900, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} rx={h/3} fill="none" stroke="currentColor" />
+            <rect x={-w/2 + 50} y={-h/2 + 50} width={w - 100} height={h - 100} rx={h/3 - 50} fill="none" stroke="currentColor" />
+        </g>
+    )},
+
+    // Plumbing - Showers
     { id: 'shower_corner', category: 'plumbing', label: 'Corner Shower', width: 900, height: 900, render: (w, h) => (
         <g><path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${h/2} L ${-w/2} ${h/2} Z`} fill="none" stroke="currentColor" /><line x1={-w/2} y1={-h/2} x2={w/2} y2={h/2} stroke="currentColor" /><line x1={-w/2} y1={h/2} x2={w/2} y2={-h/2} stroke="currentColor" /></g>
     )},
+    { id: 'shower_stall', category: 'plumbing', label: 'Shower Stall', width: 900, height: 900, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" />
+            <line x1={-w/2} y1={-h/2} x2={w/2} y2={h/2} stroke="currentColor" strokeWidth="0.5" />
+            <line x1={w/2} y1={-h/2} x2={-w/2} y2={h/2} stroke="currentColor" strokeWidth="0.5" />
+            <circle cx={0} cy={0} r={40} fill="none" stroke="currentColor" />
+        </g>
+    )},
+
+    // Plumbing - Toilets & Urinals
+    { id: 'toilet', category: 'plumbing', label: 'WC (Tank)', width: 400, height: 650, render: (w, h) => (
+        <g><rect x={-200} y={-325} width={400} height={200} fill="none" stroke="currentColor" /><ellipse cx={0} cy={100} rx={180} ry={225} fill="none" stroke="currentColor" /></g>
+    )},
+    { id: 'wc_flush', category: 'plumbing', label: 'WC (Flush Valve)', width: 400, height: 600, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2}`} stroke="currentColor" />
+            <ellipse cx={0} cy={50} rx={w/2 - 20} ry={h/2 - 50} fill="none" stroke="currentColor" />
+            <rect x={-40} y={-h/2 - 40} width={80} height={40} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'wc_bidet', category: 'plumbing', label: 'Bidet', width: 400, height: 600, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2}`} stroke="currentColor" />
+            <path d={`M ${-w/2 + 30} ${-h/2} L ${-w/2 + 30} ${0} C ${-w/2 + 30} ${h/2} ${w/2 - 30} ${h/2} ${w/2 - 30} ${0} L ${w/2 - 30} ${-h/2}`} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'urinal_wall', category: 'plumbing', label: 'Urinal (Wall)', width: 400, height: 300, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2}`} stroke="currentColor" />
+            <path d={`M ${-w/2 + 50} ${-h/2} C ${-w/2 + 50} ${h/2} ${w/2 - 50} ${h/2} ${w/2 - 50} ${-h/2}`} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'urinal_stall', category: 'plumbing', label: 'Urinal (Stall)', width: 450, height: 600, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${-w/2} ${h/2} L ${w/2} ${h/2} L ${w/2} ${-h/2}`} fill="none" stroke="currentColor" />
+            <path d={`M ${-w/2 + 100} ${-h/2} L ${-w/2 + 100} ${h/2 - 100} L ${w/2 - 100} ${h/2 - 100} L ${w/2 - 100} ${-h/2}`} fill="none" stroke="currentColor" />
+        </g>
+    )},
+
+    // Plumbing - Sinks
+    { id: 'sink_vanity', category: 'plumbing', label: 'Vanity Sink', width: 600, height: 500, render: (w, h) => (
+        <g><rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" /><circle cx={0} cy={0} r={180} fill="none" stroke="currentColor" /><rect x={-20} y={-h/2} width={40} height={50} fill="currentColor" /></g>
+    )},
+    { id: 'sink_wall', category: 'plumbing', label: 'Wall Sink', width: 500, height: 400, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} rx="20" fill="none" stroke="currentColor" />
+            <rect x={-w/2 + 40} y={-h/2 + 40} width={w - 80} height={h - 80} rx="15" fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'sink_pedestal', category: 'plumbing', label: 'Pedestal Sink', width: 550, height: 450, render: (w, h) => (
+        <g>
+            <line x1={-w/2} y1={-h/2} x2={w/2} y2={-h/2} stroke="currentColor" />
+            <ellipse cx={0} cy={0} rx={w/2} ry={h/2} fill="none" stroke="currentColor" />
+            <rect x={-w/4} y={-h/2} width={w/2} height={h/4} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'sink_corner', category: 'plumbing', label: 'Corner Sink', width: 600, height: 600, render: (w, h) => (
+        <g>
+            <path d={`M ${-w/2} ${-h/2} L ${w/2} ${-h/2} L ${w/2} ${0} L ${0} ${h/2} L ${-w/2} ${0} Z`} fill="none" stroke="currentColor" />
+            <circle cx={0} cy={-h/4} r={w/4} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'sink_kitchen_double', category: 'plumbing', label: 'Double Sink', width: 1200, height: 500, render: (w, h) => (
+        <g><rect x={-600} y={-250} width={1200} height={500} rx="20" fill="none" stroke="currentColor" /><rect x={-550} y={-200} width={500} height={400} rx="20" fill="none" stroke="currentColor" /><rect x={50} y={-200} width={500} height={400} rx="20" fill="none" stroke="currentColor" /><circle cx={0} cy={-200} r={30} fill="currentColor" /></g>
+    )},
+
+    // Electrical
     { id: 'socket_single', category: 'electrical', label: 'Single Socket', width: 300, height: 300, render: (w, h) => (
         <g transform="scale(0.8)"><circle cx="0" cy="0" r="100" fill="none" stroke="currentColor" strokeWidth="20" /><path d="M -100 0 A 100 100 0 0 1 100 0" fill="currentColor" /></g>
     )},
@@ -69,14 +163,13 @@ export const SYMBOL_CATALOG: SymbolDef[] = [
     { id: 'db_board', category: 'electrical', label: 'Distribution Board', width: 400, height: 200, render: (w, h) => (
         <g><rect x={-200} y={-100} width={400} height={200} fill="currentColor" /><text x="0" y="20" textAnchor="middle" fill="white" fontSize="100" fontWeight="bold">DB</text></g>
     )},
+
+    // HVAC / Appliances
     { id: 'stove_4plate', category: 'hvac', label: '4-Plate Stove', width: 600, height: 600, render: (w, h) => (
         <g><rect x={-300} y={-300} width={600} height={600} rx="10" fill="none" stroke="currentColor" /><circle cx={-150} cy={-150} r={100} fill="none" stroke="currentColor" /><circle cx={150} cy={-150} r={100} fill="none" stroke="currentColor" /><circle cx={-150} cy={150} r={100} fill="none" stroke="currentColor" /><circle cx={150} cy={150} r={100} fill="none" stroke="currentColor" /></g>
     )},
     { id: 'fridge', category: 'hvac', label: 'Fridge', width: 700, height: 700, render: (w, h) => (
         <g><rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" /><text x="0" y="50" textAnchor="middle" fontSize="150" fontWeight="bold" fill="currentColor">REF</text></g>
-    )},
-    { id: 'sink_kitchen_double', category: 'plumbing', label: 'Double Sink', width: 1200, height: 500, render: (w, h) => (
-        <g><rect x={-600} y={-250} width={1200} height={500} rx="20" fill="none" stroke="currentColor" /><rect x={-550} y={-200} width={500} height={400} rx="20" fill="none" stroke="currentColor" /><rect x={50} y={-200} width={500} height={400} rx="20" fill="none" stroke="currentColor" /><circle cx={0} cy={-200} r={30} fill="currentColor" /></g>
     )},
     { id: 'gas_bottle', category: 'hvac', label: 'Gas Bottle', width: 380, height: 380, render: (w, h) => (
         <g><circle cx="0" cy="0" r={190} fill="none" stroke="currentColor" strokeDasharray="20,10" /><text x="0" y="20" textAnchor="middle" fontSize="100" fontWeight="bold" fill="currentColor">GAS</text></g>
@@ -186,15 +279,6 @@ export const computeWallCorners = (wall: Wall, allWalls: Wall[]): Point[] => {
     const endCorners = getCornerPoints(wall.end, wall.id, allWalls);
 
     // Topology: StartLeft -> EndLeft -> EndRight -> StartRight
-    // NOTE: getCornerPoints returns Left/Right relative to vector LEAVING the junction.
-    // For Start: V = Start->End. Left is Left.
-    // For End: V = End->Start. Left is Left (relative to looking back).
-    // So Wall's "Left" side connects Start.Left to End.Right (because End.Right is on the same geometric side as Start.Left)
-    // Let's trace:
-    // Start V = (1,0). Left = (0, -1). 
-    // End V = (-1, 0). Left = (0, 1). Right = (0, -1).
-    // So Start.Left connects to End.Right.
-    
     return [
         startCorners.left,
         endCorners.right,
@@ -286,6 +370,14 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
     const showHatch = layer === 'all' || layer === 'hatch';
     const showStroke = layer === 'all' || layer === 'stroke';
 
+    // Distinction for Exterior (>200mm/20 units) vs Interior walls
+    const isExterior = wall.thickness >= 20;
+    
+    // Fill Colors
+    const fillClass = isExterior ? "fill-slate-400 dark:fill-slate-600" : "fill-slate-200 dark:fill-slate-800";
+    // Stroke color for curved walls (which use stroke for body)
+    const curveStrokeClass = isExterior ? "stroke-slate-400 dark:stroke-slate-600" : "stroke-slate-200 dark:stroke-slate-800";
+
     // --- CURVED WALL RENDERING ---
     if (isCurved) {
         const trueMid = { x: (wall.start.x + wall.end.x)/2, y: (wall.start.y + wall.end.y)/2 };
@@ -305,7 +397,7 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
                     const d = `M ${subC.start.x} ${subC.start.y} Q ${subC.control.x} ${subC.control.y} ${subC.end.x} ${subC.end.y}`;
                     return (
                         <g key={i}>
-                            {showFill && <path d={d} stroke="white" className="dark:stroke-slate-900" strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" />}
+                            {showFill && <path d={d} className={curveStrokeClass} strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" />}
                             {showHatch && <path d={d} stroke={hatchUrl} strokeWidth={Math.max(0.1, wall.thickness - 2)} fill="none" strokeLinecap="butt" opacity="0.5" />}
                             {showStroke && (
                                 <>
@@ -346,7 +438,7 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
 
                 return (
                     <g key={i}>
-                        {showFill && <path d={polyPath} fill="white" className="dark:fill-slate-900" stroke="none" shapeRendering="crispEdges" />}
+                        {showFill && <path d={polyPath} className={fillClass} stroke="none" shapeRendering="crispEdges" />}
                         {showHatch && <path d={polyPath} fill={hatchUrl} stroke="none" opacity="0.5" />}
                         {selected && showHatch && <path d={polyPath} fill="#3b82f6" opacity="0.2" stroke="none" />}
                         {showStroke && (
@@ -363,11 +455,17 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
                     </g>
                 );
             })}
+            
+            {selected && !wall.locked && layer === 'stroke' && (
+                <>
+                    <ResizeHandle x={wall.start.x} y={wall.start.y} />
+                    <ResizeHandle x={wall.end.x} y={wall.end.y} />
+                </>
+            )}
         </g>
     );
 };
 
-// ... (Rest of the file remains unchanged) ...
 interface OpeningEntityProps { op: Opening; wall: Wall; selected: boolean; showLabel: boolean; }
 export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected, showLabel }) => {
     const x = wall.start.x + op.t * (wall.end.x - wall.start.x);
@@ -395,7 +493,6 @@ export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected
                         )}
                     </g>
                     {op.subType !== 'sliding' && (<line x1={-op.width/20} y1={0} x2={op.width/20} y2={0} stroke="#ef4444" strokeWidth="1" strokeDasharray="2,2" />)}
-                    {showLabel && <text y={-wall.thickness/2 - op.width/10 - 10} textAnchor="middle" className="text-[10px] fill-slate-600 dark:fill-slate-400 font-bold" transform={`rotate(${-angle})`}>{op.label}</text>}
                 </g>
             ) : (
                 <g>
@@ -408,7 +505,27 @@ export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected
                     )}
                     <line x1={-op.width/20} y1={-wall.thickness/2} x2={op.width/20} y2={-wall.thickness/2} className="stroke-slate-700 dark:stroke-slate-300" strokeWidth="0.5"/>
                     <line x1={-op.width/20} y1={wall.thickness/2} x2={op.width/20} y2={wall.thickness/2} className="stroke-slate-700 dark:stroke-slate-300" strokeWidth="0.5"/>
-                    {showLabel && <text y={wall.thickness/2 + 20} textAnchor="middle" className="text-[10px] fill-slate-600 dark:fill-slate-400 font-bold" transform={`rotate(${-angle})`}>{op.label}</text>}
+                </g>
+            )}
+            
+            {showLabel && (
+                <text 
+                    x={0} 
+                    y={0} 
+                    dy="0.3em" 
+                    textAnchor="middle" 
+                    className="text-[10px] fill-slate-900 dark:fill-slate-100 font-bold pointer-events-none" 
+                    transform={`rotate(${-angle})`}
+                    style={{ textShadow: '0px 0px 3px rgba(255,255,255,0.7), 0px 0px 3px rgba(0,0,0,0.3)' }}
+                >
+                    {op.label}
+                </text>
+            )}
+
+            {selected && !op.locked && (
+                <g>
+                    <ResizeHandle x={-op.width/20} y={0} cursor="cursor-ew-resize" />
+                    <ResizeHandle x={op.width/20} y={0} cursor="cursor-ew-resize" />
                 </g>
             )}
         </g>
@@ -500,28 +617,50 @@ export const DimensionEntity: React.FC<DimensionEntityProps> = ({ dim, selected 
     const pStart = add(dim.start, scale(normal, offset));
     const pEnd = add(dim.end, scale(normal, offset));
 
+    // Perpendicular ticks logic (straight ticks)
+    const tickSize = 3;
+    const tickVec = { x: normal.x * tickSize, y: normal.y * tickSize };
+
     return (
         <g className="cursor-pointer group">
+            {/* Hit Area */}
             <line x1={pStart.x} y1={pStart.y} x2={pEnd.x} y2={pEnd.y} stroke="transparent" strokeWidth="10" />
-            <line x1={dim.start.x} y1={dim.start.y} x2={pStart.x} y2={pStart.y} className="stroke-slate-300 dark:stroke-slate-600" strokeDasharray="2,2" />
-            <line x1={dim.end.x} y1={dim.end.y} x2={pEnd.x} y2={pEnd.y} className="stroke-slate-300 dark:stroke-slate-600" strokeDasharray="2,2" />
-            <line x1={pStart.x} y1={pStart.y} x2={pEnd.x} y2={pEnd.y} className={`${selected ? 'stroke-blue-500' : 'stroke-slate-500 dark:stroke-slate-400'}`} markerEnd="url(#arrow)" markerStart="url(#arrow)" />
+            
+            {/* Extension Lines */}
+            <line x1={dim.start.x} y1={dim.start.y} x2={pStart.x} y2={pStart.y} className="stroke-slate-300 dark:stroke-slate-600" strokeDasharray="2,2" strokeWidth="0.5" />
+            <line x1={dim.end.x} y1={dim.end.y} x2={pEnd.x} y2={pEnd.y} className="stroke-slate-300 dark:stroke-slate-600" strokeDasharray="2,2" strokeWidth="0.5" />
+            
+            {/* Dimension Line */}
+            <line x1={pStart.x} y1={pStart.y} x2={pEnd.x} y2={pEnd.y} className={`${selected ? 'stroke-blue-500' : 'stroke-slate-500 dark:stroke-slate-400'}`} strokeWidth="1" />
+            
+            {/* Straight Ticks */}
+            <line x1={pStart.x - tickVec.x} y1={pStart.y - tickVec.y} x2={pStart.x + tickVec.x} y2={pStart.y + tickVec.y} className={`${selected ? 'stroke-blue-500' : 'stroke-slate-500 dark:stroke-slate-400'}`} strokeWidth="1.5" />
+            <line x1={pEnd.x - tickVec.x} y1={pEnd.y - tickVec.y} x2={pEnd.x + tickVec.x} y2={pEnd.y + tickVec.y} className={`${selected ? 'stroke-blue-500' : 'stroke-slate-500 dark:stroke-slate-400'}`} strokeWidth="1.5" />
+
             <g transform={`translate(${ (pStart.x + pEnd.x)/2 }, ${ (pStart.y + pEnd.y)/2 })`}>
-                <rect x="-20" y="-10" width="40" height="20" rx="4" fill="white" className="dark:fill-slate-900" opacity="0.8" />
-                <text textAnchor="middle" alignmentBaseline="middle" className={`text-xs font-mono select-none ${selected ? 'fill-blue-500' : 'fill-slate-600 dark:fill-slate-300'}`}>{Math.round(d * 10)}</text>
+                <rect x="-14" y="-7" width="28" height="14" rx="2" fill="white" className="dark:fill-slate-900" opacity="0.8" />
+                <text textAnchor="middle" alignmentBaseline="middle" className={`text-[10px] font-mono select-none ${selected ? 'fill-blue-500' : 'fill-slate-600 dark:fill-slate-300'}`}>{Math.round(d * 10)}</text>
             </g>
         </g>
     )
 };
 
 interface LabelEntityProps { label: RoomLabel; selected: boolean; }
-export const LabelEntity: React.FC<LabelEntityProps> = ({ label, selected }) => (
-    <g transform={`translate(${label.position.x}, ${label.position.y})`} className="cursor-move">
-        <text textAnchor="middle" className={`text-sm font-bold select-none ${selected ? 'fill-blue-500' : 'fill-slate-800 dark:fill-slate-200'}`}>{label.text}</text>
-        {label.area && <text y="15" textAnchor="middle" className="text-xs fill-slate-500 dark:fill-slate-400">{label.area.toFixed(1)} m²</text>}
-        {label.locked && <circle r="4" cx="20" cy="-5" fill="red" opacity="0.5" />}
-    </g>
-);
+export const LabelEntity: React.FC<LabelEntityProps> = ({ label, selected }) => {
+    // Dynamic scaling based on area to prevent overlap on small rooms
+    // Base size approx 10px-14px for typical rooms, scaled down for small areas
+    // Clamp between 6px (tiny) and 16px (large)
+    const area = label.area || 0;
+    const baseSize = area > 0 ? Math.max(6, Math.min(16, Math.sqrt(area) * 2)) : 10;
+
+    return (
+        <g transform={`translate(${label.position.x}, ${label.position.y})`} className="cursor-move">
+            <text textAnchor="middle" style={{ fontSize: `${baseSize}px` }} className={`font-bold select-none ${selected ? 'fill-blue-500' : 'fill-slate-800 dark:fill-slate-200'}`}>{label.text}</text>
+            {label.area && <text y={baseSize + 2} textAnchor="middle" style={{ fontSize: `${baseSize * 0.7}px` }} className="fill-slate-500 dark:fill-slate-400">{label.area.toFixed(1)} m²</text>}
+            {label.locked && <circle r="2" cx={baseSize} cy={-baseSize/2} fill="red" opacity="0.5" />}
+        </g>
+    );
+};
 
 interface NorthArrowEntityProps { arrow: NorthArrow; selected: boolean; }
 export const NorthArrowEntity: React.FC<NorthArrowEntityProps> = ({ arrow, selected }) => (
@@ -537,12 +676,21 @@ interface SymbolEntityProps { symbol: SymbolInstance; selected: boolean; }
 export const SymbolEntity: React.FC<SymbolEntityProps> = ({ symbol, selected }) => {
     const def = SYMBOL_CATALOG.find(d => d.id === symbol.type);
     if (!def) return null;
-    const w = (def.width / 10) * symbol.scale;
-    const h = (def.height / 10) * symbol.scale;
+    // Use instance width/height if available, else fall back to catalog defaults scaled
+    const w = symbol.width !== undefined ? symbol.width / 10 : (def.width / 10) * symbol.scale;
+    const h = symbol.height !== undefined ? symbol.height / 10 : (def.height / 10) * symbol.scale;
     return (
         <g transform={`translate(${symbol.position.x}, ${symbol.position.y}) rotate(${symbol.rotation})`} className={`cursor-move transition-colors ${selected ? 'text-blue-500' : 'text-slate-700 dark:text-slate-300'}`}>
              {def.render(w, h)}
              {symbol.locked && <circle r="5" fill="red" opacity="0.5" />}
+             {selected && !symbol.locked && (
+                 <g>
+                     <ResizeHandle x={-w/2} y={-h/2} cursor="cursor-nw-resize" />
+                     <ResizeHandle x={w/2} y={-h/2} cursor="cursor-ne-resize" />
+                     <ResizeHandle x={-w/2} y={h/2} cursor="cursor-sw-resize" />
+                     <ResizeHandle x={w/2} y={h/2} cursor="cursor-se-resize" />
+                 </g>
+             )}
         </g>
     );
 };
@@ -568,8 +716,9 @@ export const AutoDimensionEntity: React.FC<AutoDimensionEntityProps> = ({ wall, 
     }
 
     const baseOffset = (wall.thickness / 2);
-    const tier1Offset = baseOffset + 30; 
-    const tier2Offset = baseOffset + 60;
+    // Increased offsets to avoid intersections
+    const tier1Offset = baseOffset + 120; 
+    const tier2Offset = baseOffset + 200;
 
     const wallLen = dist(wall.start, wall.end);
     const sortedOpenings = [...openings].sort((a, b) => a.t - b.t);
@@ -599,15 +748,19 @@ export const AutoDimensionEntity: React.FC<AutoDimensionEntityProps> = ({ wall, 
     const renderDimLine = (offset: number, segments: {t: number, val: number}[], isOverall = false) => {
         const pStart = add(wall.start, scale(normal, offset));
         const pEnd = add(wall.end, scale(normal, offset));
-        const tickSize = 5;
+        const tickSize = 3; // Straight/Perpendicular tick size
+        const tickVec = { x: normal.x * tickSize, y: normal.y * tickSize };
+
         let rotation = Math.atan2(dir.y, dir.x) * 180 / Math.PI;
         if (rotation > 90 || rotation <= -90) rotation += 180;
 
         return (
             <g>
                 <line x1={pStart.x} y1={pStart.y} x2={pEnd.x} y2={pEnd.y} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="0.5" />
-                <line x1={pStart.x - normal.x*tickSize + dir.x*tickSize} y1={pStart.y - normal.y*tickSize + dir.y*tickSize} x2={pStart.x + normal.x*tickSize - dir.x*tickSize} y2={pStart.y + normal.y*tickSize - dir.y*tickSize} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
-                <line x1={pEnd.x - normal.x*tickSize + dir.x*tickSize} y1={pEnd.y - normal.y*tickSize + dir.y*tickSize} x2={pEnd.x + normal.x*tickSize - dir.x*tickSize} y2={pEnd.y + normal.y*tickSize - dir.y*tickSize} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
+                {/* Start Tick (Straight) */}
+                <line x1={pStart.x - tickVec.x} y1={pStart.y - tickVec.y} x2={pStart.x + tickVec.x} y2={pStart.y + tickVec.y} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
+                {/* End Tick (Straight) */}
+                <line x1={pEnd.x - tickVec.x} y1={pEnd.y - tickVec.y} x2={pEnd.x + tickVec.x} y2={pEnd.y + tickVec.y} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
 
                 {!isOverall && sortedOpenings.map((op, i) => {
                      const opWidthUnits = op.width / 10;
@@ -616,26 +769,30 @@ export const AutoDimensionEntity: React.FC<AutoDimensionEntityProps> = ({ wall, 
                      const opEnd = add(center, scale(dir, opWidthUnits/2));
                      const pOpStart = add(opStart, scale(normal, offset));
                      const pOpEnd = add(opEnd, scale(normal, offset));
-                     const extStart = add(opStart, scale(normal, wall.thickness/2 + 2));
-                     const extEnd = add(opEnd, scale(normal, wall.thickness/2 + 2));
+                     
+                     // Accurate edge-to-edge: Start extension lines from wall face
+                     const extStart = add(opStart, scale(normal, wall.thickness/2)); 
+                     const extEnd = add(opEnd, scale(normal, wall.thickness/2)); 
                      
                      return (
                          <g key={i}>
                              <line x1={extStart.x} y1={extStart.y} x2={pOpStart.x} y2={pOpStart.y} className="stroke-slate-300 dark:stroke-slate-600" strokeWidth="0.5" />
                              <line x1={extEnd.x} y1={extEnd.y} x2={pOpEnd.x} y2={pOpEnd.y} className="stroke-slate-300 dark:stroke-slate-600" strokeWidth="0.5" />
-                             <line x1={pOpStart.x - normal.x*tickSize + dir.x*tickSize} y1={pOpStart.y - normal.y*tickSize + dir.y*tickSize} x2={pOpStart.x + normal.x*tickSize - dir.x*tickSize} y2={pOpStart.y + normal.y*tickSize - dir.y*tickSize} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
-                             <line x1={pOpEnd.x - normal.x*tickSize + dir.x*tickSize} y1={pOpEnd.y - normal.y*tickSize + dir.y*tickSize} x2={pOpEnd.x + normal.x*tickSize - dir.x*tickSize} y2={pOpEnd.y + normal.y*tickSize - dir.y*tickSize} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
+                             {/* Ticks (Straight) */}
+                             <line x1={pOpStart.x - tickVec.x} y1={pOpStart.y - tickVec.y} x2={pOpStart.x + tickVec.x} y2={pOpStart.y + tickVec.y} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
+                             <line x1={pOpEnd.x - tickVec.x} y1={pOpEnd.y - tickVec.y} x2={pOpEnd.x + tickVec.x} y2={pOpEnd.y + tickVec.y} className="stroke-slate-500 dark:stroke-slate-400" strokeWidth="1"/>
                          </g>
                      )
                 })}
 
                 {segments.map((seg, idx) => {
                     const pos = add(wall.start, scale(sub(wall.end, wall.start), seg.t));
-                    const textPos = add(pos, scale(normal, offset + 5)); 
+                    // Place text on the line (center)
+                    const textPos = add(pos, scale(normal, offset)); 
                     return (
                         <g key={idx} transform={`translate(${textPos.x}, ${textPos.y}) rotate(${rotation})`}>
-                            <rect x="-14" y="-6" width="28" height="12" fill="white" className="dark:fill-slate-900" opacity="0.8" />
-                            <text x="0" y="0" textAnchor="middle" alignmentBaseline="middle" fontSize="10" className="fill-slate-600 dark:fill-slate-400 font-mono font-semibold">{Math.round(seg.val)}</text>
+                            <rect x="-10" y="-4" width="20" height="8" fill="white" className="dark:fill-slate-900" opacity="0.8" />
+                            <text x="0" y="0" textAnchor="middle" alignmentBaseline="middle" fontSize="8" className="fill-slate-600 dark:fill-slate-400 font-mono font-semibold">{Math.round(seg.val)}</text>
                         </g>
                     )
                 })}
@@ -645,8 +802,14 @@ export const AutoDimensionEntity: React.FC<AutoDimensionEntityProps> = ({ wall, 
 
     return (
         <g pointerEvents="none">
-             {sortedOpenings.length > 0 && renderDimLine(tier1Offset, points)}
-             {renderDimLine(sortedOpenings.length > 0 ? tier2Offset : tier1Offset, [{t: 0.5, val: wallLen * 10}], true)}
+             {sortedOpenings.length > 0 ? (
+                 <>
+                    {renderDimLine(tier1Offset, points)}
+                    {renderDimLine(tier2Offset, [{t: 0.5, val: wallLen * 10}], true)}
+                 </>
+             ) : (
+                 renderDimLine(tier1Offset, [{t: 0.5, val: wallLen * 10}], true)
+             )}
         </g>
     );
 };

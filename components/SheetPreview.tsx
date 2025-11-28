@@ -19,6 +19,7 @@ const SHEET_HEIGHT = SHEET_HEIGHT_MM * SCALE_FACTOR;
 
 // Updated layout constants
 const TITLE_BLOCK_WIDTH = 130 * SCALE_FACTOR; // Widened for better legibility
+const LEGEND_WIDTH = 160 * SCALE_FACTOR; // Reserved width for Legend
 const MARGIN = 15 * SCALE_FACTOR; // Increased margin
 const BLOCK_GAP = 5 * SCALE_FACTOR;
 
@@ -35,6 +36,9 @@ export const SheetPreview: React.FC<SheetPreviewProps> = ({ data, onUpdate }) =>
     const zoomRef = useRef(zoom);
     const panRef = useRef(pan);
     useEffect(() => { zoomRef.current = zoom; panRef.current = pan; }, [zoom, pan]);
+
+    // Generate Legend Data
+    const legendData = useMemo(() => generateLegendData(data), [data]);
 
     // Calculate Internal Layout
     const layout = useMemo(() => {
@@ -58,9 +62,9 @@ export const SheetPreview: React.FC<SheetPreviewProps> = ({ data, onUpdate }) =>
         const planWidth = maxX - minX;
         const planHeight = maxY - minY;
 
-        // Space available for drawing (Everything left of Title Block)
+        // Space available for drawing (Everything left of Title Block AND Legend)
         // General Notes now overlays bottom left, so we don't subtract it from width
-        const drawAreaW = SHEET_WIDTH - TITLE_BLOCK_WIDTH - (MARGIN * 3);
+        const drawAreaW = SHEET_WIDTH - TITLE_BLOCK_WIDTH - LEGEND_WIDTH - (MARGIN * 4);
         const drawAreaH = SHEET_HEIGHT - (MARGIN * 2);
 
         // Adjust for rotation (swap width/height if 90/270 degrees)
@@ -108,33 +112,6 @@ export const SheetPreview: React.FC<SheetPreviewProps> = ({ data, onUpdate }) =>
             const startY = (rect.height - paperH_px * fitScale) / 2;
             setPan({ x: startX, y: startY });
         }
-    }, []);
-
-    // ... (Zoom/Pan handlers same as before) ...
-    useEffect(() => {
-        const node = containerRef.current;
-        if (!node) return;
-        const handleWheel = (e: WheelEvent) => {
-            if (e.ctrlKey) {
-                e.preventDefault();
-                const currentZoom = zoomRef.current;
-                const currentPan = panRef.current;
-                const delta = -e.deltaY;
-                const factor = delta > 0 ? 1.1 : 0.9;
-                const newZoom = Math.max(0.05, Math.min(5, currentZoom * factor));
-                const rect = node.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
-                const worldX = (mouseX - currentPan.x) / currentZoom;
-                const worldY = (mouseY - currentPan.y) / currentZoom;
-                const newPanX = mouseX - worldX * newZoom;
-                const newPanY = mouseY - worldY * newZoom;
-                setZoom(newZoom);
-                setPan({ x: newPanX, y: newPanY });
-            }
-        };
-        node.addEventListener('wheel', handleWheel, { passive: false });
-        return () => node.removeEventListener('wheel', handleWheel);
     }, []);
 
     const handleZoomBtn = (factor: number) => {
@@ -224,7 +201,6 @@ export const SheetPreview: React.FC<SheetPreviewProps> = ({ data, onUpdate }) =>
                     </text>
 
                     {/* Viewport */}
-                    {/* Translate to center of draw area, rotate, scale, then translate back by plan center */}
                     <g transform={`translate(${layout.translateX}, ${layout.translateY}) rotate(${viewRotation}) scale(${layout.scale}) translate(${-layout.planCenterX}, ${-layout.planCenterY})`}>
                          {/* LAYER 1: FILLS */}
                          {data.walls.map(wall => {
@@ -253,9 +229,9 @@ export const SheetPreview: React.FC<SheetPreviewProps> = ({ data, onUpdate }) =>
                         {data.dimensions.map(d => <DimensionEntity key={d.id} dim={d} selected={false} />)}
                     </g>
 
-                    {/* Fixed North Arrow (Bottom Right of Drawing Area) - Adjusted for View Rotation */}
+                    {/* Fixed North Arrow */}
                     {data.northArrow && (
-                        <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - MARGIN - 300}, ${SHEET_HEIGHT - MARGIN - 300}) scale(3.5)`}>
+                        <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - LEGEND_WIDTH - MARGIN - 300}, ${SHEET_HEIGHT - MARGIN - 300}) scale(3.5)`}>
                              <g transform={`rotate(${data.northArrow.rotation + viewRotation})`}>
                                 <circle r="30" fill="none" stroke="black" strokeWidth="2" />
                                 <path d="M 0 -25 L 10 0 L 0 25 L -10 0 Z" fill="black" />
@@ -276,6 +252,25 @@ export const SheetPreview: React.FC<SheetPreviewProps> = ({ data, onUpdate }) =>
                                     </text>
                                 ))}
                             </g>
+                        </g>
+                    )}
+
+                    {/* Object Legend (Top Right of Draw Area) */}
+                    {legendData.length > 0 && (
+                        <g transform={`translate(${SHEET_WIDTH - TITLE_BLOCK_WIDTH - MARGIN - LEGEND_WIDTH}, ${MARGIN})`}>
+                            <rect width={LEGEND_WIDTH} height={100 + legendData.length * 80} fill="white" stroke="black" strokeWidth="3" />
+                            <rect width={LEGEND_WIDTH} height="80" fill="black" />
+                            <text x={LEGEND_WIDTH/2} y="55" textAnchor="middle" fill="white" fontSize="42" fontWeight="bold" letterSpacing="5">LEGEND</text>
+                            
+                            {legendData.map((item, i) => (
+                                <g key={i} transform={`translate(0, ${100 + i * 80})`}>
+                                    <line x1="0" y1="-20" x2={LEGEND_WIDTH} y2="-20" stroke="#cbd5e1" strokeWidth="2" />
+                                    {/* Code */}
+                                    <text x="40" y="30" fontSize="32" fontWeight="bold" fill="black">{item.code}</text>
+                                    {/* Description */}
+                                    <text x="300" y="30" fontSize="32" fill="#334155">{item.description}</text>
+                                </g>
+                            ))}
                         </g>
                     )}
 

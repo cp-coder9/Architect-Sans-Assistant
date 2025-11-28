@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Square, DoorOpen, LayoutTemplate, Type, MousePointer2, Ruler, Download, ShieldCheck, FileSignature, Undo2, Redo2, BoxSelect, Spline, Scaling, Footprints, Armchair, RectangleHorizontal, BrickWall, BookOpen, GalleryVertical, Maximize, Minimize, ArrowLeftRight, FileImage, FileType, Hand, Sparkles } from 'lucide-react';
+import { Square, DoorOpen, LayoutTemplate, Type, MousePointer2, Ruler, Download, ShieldCheck, FileSignature, Undo2, Redo2, BoxSelect, Spline, Scaling, Footprints, Armchair, RectangleHorizontal, BrickWall, BookOpen, GalleryVertical, Maximize, Minimize, ArrowLeftRight, FileImage, FileType, Hand, Sparkles, Save } from 'lucide-react';
 import { ToolType } from '../types';
 import { SYMBOL_CATALOG } from './CanvasEntities';
 
@@ -12,6 +12,7 @@ interface ToolbarProps {
   onExportPdf: () => void;
   onCheckCompliance: () => void;
   onEditMetadata: () => void;
+  onSave: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -42,6 +43,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onExportPdf,
   onCheckCompliance, 
   onEditMetadata,
+  onSave,
   onUndo,
   onRedo,
   canUndo,
@@ -99,8 +101,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         {/* Main Floating Bar */}
         <div className="flex items-center gap-2 p-2 rounded-2xl shadow-2xl backdrop-blur-xl bg-white/80 dark:bg-slate-900/80 border border-white/20 dark:border-slate-700 resize-x overflow-x-auto overflow-y-hidden min-w-[fit-content]" style={{ maxWidth: '95vw' }}>
             
-            {/* History Group */}
+            {/* History & Save Group */}
             <div className="flex items-center gap-1 pr-2 border-r border-slate-200 dark:border-slate-700 shrink-0">
+                <button 
+                    onClick={onSave} 
+                    className="group relative p-2 rounded-xl transition-all hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                    title="Save Project"
+                >
+                    <Save size={20} />
+                </button>
+                <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                 <button 
                     onClick={onUndo} 
                     disabled={!canUndo}

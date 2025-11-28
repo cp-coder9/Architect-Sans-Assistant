@@ -1,3 +1,4 @@
+
 import { Point, Wall, Opening } from '../types';
 import { dist, sub, add, scale, dot, intersect, norm } from './geometry';
 
@@ -14,7 +15,7 @@ export interface SnapResult {
     point: Point;
     guides: SnapGuide[];
     snapped: boolean;
-    snapType?: 'point' | 'edge' | 'perpendicular' | 'intersection' | 'alignment' | 'grid';
+    snapType?: 'point' | 'edge' | 'perpendicular' | 'intersection' | 'alignment' | 'grid' | 'midpoint';
 }
 
 export const getSnapPoint = (
@@ -28,271 +29,222 @@ export const getSnapPoint = (
     const guides: SnapGuide[] = [];
     const validWalls = walls.filter(w => !excludeIds.includes(w.id));
     
-    // Thresholds
-    const POINT_THRESHOLD = (SNAP_THRESHOLD + 5) / zoom; 
-    const EDGE_THRESHOLD = SNAP_THRESHOLD / zoom;
+    // Zoom-adjusted threshold for consistent feel
+    const THRESHOLD = SNAP_THRESHOLD / zoom; 
 
-    let bestPoint = { x: p.x, y: p.y };
-    let minPointDist = POINT_THRESHOLD;
-    let hasPointSnap = false;
-    let snapType: SnapResult['snapType'] = undefined;
+    // --- PRIORITY 1: CRITICAL POINTS (Endpoints, Midpoints, Real Intersections) ---
+    // These are the strongest snaps.
 
-    // --- TIER 1: HIGH PRIORITY (Perpendicular, Endpoints, Intersections, Opening Centers) ---
+    let bestPointDist = THRESHOLD;
+    let bestPointSnap: { point: Point, type: SnapResult['snapType'] } | null = null;
 
-    // 0. Perpendicular Snap (Relative to drawing origin)
+    // 1. Collect Point Candidates
+    const candidates: { point: Point, type: SnapResult['snapType'] }[] = [];
+    
+    validWalls.forEach(w => {
+        candidates.push({ point: w.start, type: 'point' });
+        candidates.push({ point: w.end, type: 'point' });
+        candidates.push({ point: { x: (w.start.x + w.end.x)/2, y: (w.start.y + w.end.y)/2 }, type: 'midpoint' });
+    });
+
+    // 2. Real Wall Intersections (where walls actually cross or meet)
+    for (let i = 0; i < validWalls.length; i++) {
+        for (let j = i + 1; j < validWalls.length; j++) {
+            const w1 = validWalls[i];
+            const w2 = validWalls[j];
+            // Check strict segment intersection first for strong snap
+            const segInt = intersect(w1.start, w1.end, w2.start, w2.end, false);
+            if (segInt) candidates.push({ point: segInt, type: 'intersection' });
+        }
+    }
+
+    // Evaluate Point Candidates
+    for (const cand of candidates) {
+        const d = dist(p, cand.point);
+        if (d < bestPointDist) {
+            bestPointDist = d;
+            bestPointSnap = cand;
+        }
+    }
+
+    // 3. Perpendicular Snap (Only if drawing from an origin)
     if (origin) {
         for (const w of validWalls) {
              const v = sub(w.end, w.start);
              const l2 = dot(v, v);
              if (l2 === 0) continue;
-             
-             // Project origin onto wall line (infinite)
              const t = dot(sub(origin, w.start), v) / l2;
-             const perpPoint = add(w.start, scale(v, t));
-             
-             const d = dist(p, perpPoint);
-             if (d < minPointDist) {
-                 minPointDist = d;
-                 bestPoint = perpPoint;
-                 hasPointSnap = true;
-                 snapType = 'perpendicular';
-                 
-                 const dir = norm(v);
-                 // Guide showing the wall line being snapped to (perpendicular base)
-                 const g1 = add(perpPoint, scale(dir, -1000/zoom));
-                 const g2 = add(perpPoint, scale(dir, 1000/zoom));
-                 guides.length = 0; 
-                 guides.push({ x1: g1.x, y1: g1.y, x2: g2.x, y2: g2.y, type: 'perpendicular' });
-                 // Guide from origin to perp point
-                 guides.push({ x1: origin.x, y1: origin.y, x2: perpPoint.x, y2: perpPoint.y, type: 'perpendicular' });
-             }
-        }
-    }
-
-    // 1. Wall Endpoints
-    for (const w of validWalls) {
-        const dStart = dist(w.start, p);
-        if (dStart < minPointDist) {
-            minPointDist = dStart;
-            bestPoint = w.start;
-            hasPointSnap = true;
-            snapType = 'point';
-            guides.length = 0;
-        }
-        const dEnd = dist(w.end, p);
-        if (dEnd < minPointDist) {
-            minPointDist = dEnd;
-            bestPoint = w.end;
-            hasPointSnap = true;
-            snapType = 'point';
-            guides.length = 0;
-        }
-    }
-
-    // 2. Opening Centers
-    for (const op of openings) {
-        const wall = walls.find(w => w.id === op.wallId);
-        if (wall && !excludeIds.includes(wall.id)) {
-            const opPos = add(wall.start, scale(sub(wall.end, wall.start), op.t));
-            const d = dist(opPos, p);
-            if (d < minPointDist) {
-                minPointDist = d;
-                bestPoint = opPos;
-                hasPointSnap = true;
-                snapType = 'point';
-                guides.length = 0;
-            }
-        }
-    }
-
-    // 3. Wall Intersections
-    for (let i = 0; i < validWalls.length; i++) {
-        for (let j = i + 1; j < validWalls.length; j++) {
-            const w1 = validWalls[i];
-            const w2 = validWalls[j];
-            
-            const intPt = intersect(w1.start, w1.end, w2.start, w2.end, true);
-            if (intPt) {
-                const d = dist(p, intPt);
-                if (d < minPointDist) {
-                    minPointDist = d;
-                    bestPoint = intPt;
-                    hasPointSnap = true;
-                    snapType = 'intersection';
-                    guides.length = 0;
-                    guides.push({ x1: w1.start.x, y1: w1.start.y, x2: intPt.x, y2: intPt.y, type: 'extension' });
-                    guides.push({ x1: w1.end.x, y1: w1.end.y, x2: intPt.x, y2: intPt.y, type: 'extension' });
-                    guides.push({ x1: w2.start.x, y1: w2.start.y, x2: intPt.x, y2: intPt.y, type: 'extension' });
-                    guides.push({ x1: w2.end.x, y1: w2.end.y, x2: intPt.x, y2: intPt.y, type: 'extension' });
-                }
-            }
-        }
-    }
-
-    if (hasPointSnap) {
-        return { point: bestPoint, guides, snapped: true, snapType };
-    }
-
-    // --- TIER 2: LOW PRIORITY (Edges, Alignments) ---
-    
-    // 1. Edge Snap Candidate
-    let edgeCandidate: { point: Point, wall: Wall } | null = null;
-    let minEdgeDist = EDGE_THRESHOLD;
-
-    for (const w of validWalls) {
-        const v = sub(w.end, w.start);
-        const l2 = dot(v, v);
-        if (l2 === 0) continue;
-        
-        const t = Math.max(0, Math.min(1, dot(sub(p, w.start), v) / l2));
-        const proj = add(w.start, scale(v, t));
-        const dProj = dist(p, proj);
-
-        if (dProj < minEdgeDist) {
-            minEdgeDist = dProj;
-            edgeCandidate = { point: proj, wall: w };
-        }
-    }
-
-    // 2. Alignment Candidates
-    const xCoords: { val: number, y: number }[] = [];
-    const yCoords: { val: number, x: number }[] = [];
-
-    validWalls.forEach(w => {
-        xCoords.push({ val: w.start.x, y: w.start.y });
-        xCoords.push({ val: w.end.x, y: w.end.y });
-        yCoords.push({ val: w.start.y, x: w.start.x });
-        yCoords.push({ val: w.end.y, x: w.end.x });
-    });
-
-    openings.forEach(op => {
-         const wall = walls.find(w => w.id === op.wallId);
-         if (wall && !excludeIds.includes(wall.id)) {
-            const opPos = add(wall.start, scale(sub(wall.end, wall.start), op.t));
-            xCoords.push({ val: opPos.x, y: opPos.y });
-            yCoords.push({ val: opPos.y, x: opPos.x });
-         }
-    });
-
-    let alignX: { val: number, y: number } | null = null;
-    let alignY: { val: number, x: number } | null = null;
-
-    let minDistX = EDGE_THRESHOLD;
-    for (const cand of xCoords) {
-        if (Math.abs(p.x - cand.val) < minDistX) {
-            minDistX = Math.abs(p.x - cand.val);
-            alignX = cand;
-        }
-    }
-
-    let minDistY = EDGE_THRESHOLD;
-    for (const cand of yCoords) {
-        if (Math.abs(p.y - cand.val) < minDistY) {
-            minDistY = Math.abs(p.y - cand.val);
-            alignY = cand;
-        }
-    }
-
-    // 3. Resolve
-    guides.length = 0;
-    
-    // Case A: Edge Snap found
-    if (edgeCandidate) {
-        bestPoint = edgeCandidate.point;
-        snapType = 'edge';
-        
-        // Try to intersect edge with alignment lines
-        let intersected = false;
-
-        // Check X Alignment intersection with Edge
-        if (alignX) {
-            const w = edgeCandidate.wall;
-            const v = sub(w.end, w.start);
-            // x = alignX.val.  P = S + tV.  alignX.val = S.x + t*V.x
-            if (Math.abs(v.x) > 0.001) {
-                const t = (alignX.val - w.start.x) / v.x;
-                if (t >= 0 && t <= 1) {
-                    const intPt = add(w.start, scale(v, t));
-                    if (dist(p, intPt) < EDGE_THRESHOLD * 2) { // Slightly larger grab for intersection
-                        bestPoint = intPt;
-                        snapType = 'intersection';
-                        guides.push({ x1: alignX.val, y1: alignX.y, x2: intPt.x, y2: intPt.y, type: 'alignment' });
-                        intersected = true;
-                    }
-                }
-            }
-        }
-        
-        // Check Y Alignment intersection with Edge (priority if closer or if no X intersection)
-        if (alignY) {
-             const w = edgeCandidate.wall;
-             const v = sub(w.end, w.start);
-             if (Math.abs(v.y) > 0.001) {
-                 const t = (alignY.val - w.start.y) / v.y;
-                 if (t >= 0 && t <= 1) {
-                     const intPt = add(w.start, scale(v, t));
-                     // If we haven't intersected yet, or if this point is closer to cursor (or similar logic)
-                     // Here we just check proximity
-                     if (dist(p, intPt) < EDGE_THRESHOLD * 2) {
-                         bestPoint = intPt;
-                         snapType = 'intersection';
-                         guides.push({ x1: alignY.x, y1: alignY.val, x2: intPt.x, y2: intPt.y, type: 'alignment' });
-                         intersected = true;
-                     }
+             // Constrain to segment for now, or allow infinite line? Segment is safer for "Perpendicular" meaning "On Wall".
+             if (t >= 0 && t <= 1) { 
+                 const perp = add(w.start, scale(v, t));
+                 const d = dist(p, perp);
+                 if (d < bestPointDist) {
+                     bestPointDist = d;
+                     bestPointSnap = { point: perp, type: 'perpendicular' };
                  }
              }
         }
-        
-        return { point: bestPoint, guides, snapped: true, snapType };
     }
 
-    // Case B: No Edge Snap, pure alignment
-    let snapped = false;
-    
-    if (alignX) {
-        bestPoint.x = alignX.val;
-        snapped = true;
-        snapType = 'alignment';
-        guides.push({ x1: alignX.val, y1: alignX.y, x2: alignX.val, y2: bestPoint.y, type: 'alignment' });
+    // Return Priority 1 Snap if found
+    if (bestPointSnap) {
+        if (bestPointSnap.type === 'perpendicular' && origin) {
+             guides.push({ x1: origin.x, y1: origin.y, x2: bestPointSnap.point.x, y2: bestPointSnap.point.y, type: 'perpendicular' });
+             // Draw the wall base as a guide
+             const w = validWalls.find(w => dist(projectOnSegment(w.start, w.end, bestPointSnap!.point), bestPointSnap!.point) < 0.1);
+             if(w) guides.push({ x1: w.start.x, y1: w.start.y, x2: w.end.x, y2: w.end.y, type: 'perpendicular' });
+        }
+        return { point: bestPointSnap.point, guides, snapped: true, snapType: bestPointSnap.type };
     }
-    
-    if (alignY) {
-        bestPoint.y = alignY.val;
-        snapped = true;
-        snapType = 'alignment';
-        guides.push({ x1: alignY.x, y1: alignY.val, x2: bestPoint.x, y2: alignY.val, type: 'alignment' });
-    }
-    
-    if (snapped) return { point: bestPoint, guides, snapped: true, snapType };
 
-    // Case C: Ortho Lock (if drawing)
+    // --- PRIORITY 2: SMART ALIGNMENTS & EDGE SNAPS ---
+    
+    // Gather Alignment Candidates (X and Y coordinates)
+    // We store the 'source' point to draw the guide line from.
+    const xCandidates: { x: number, source: Point }[] = [];
+    const yCandidates: { y: number, source: Point }[] = [];
+
     if (origin) {
-        const dx = Math.abs(p.x - origin.x);
-        const dy = Math.abs(p.y - origin.y);
-        
-        if (dx < EDGE_THRESHOLD) { 
-            bestPoint.x = origin.x; 
-            snapped = true; 
-            snapType = 'alignment';
-            guides.push({ x1: origin.x, y1: origin.y, x2: origin.x, y2: p.y, type: 'alignment' });
-        }
-        else if (dy < EDGE_THRESHOLD) { 
-            bestPoint.y = origin.y; 
-            snapped = true; 
-            snapType = 'alignment'; 
-            guides.push({ x1: origin.x, y1: origin.y, x2: p.x, y2: origin.y, type: 'alignment' });
-        }
+        xCandidates.push({ x: origin.x, source: origin });
+        yCandidates.push({ y: origin.y, source: origin });
     }
     
-    // Case D: Grid Snap
-    if (!snapped) {
-        const gridX = Math.round(p.x / GRID_SIZE) * GRID_SIZE;
-        const gridY = Math.round(p.y / GRID_SIZE) * GRID_SIZE;
-        if (Math.abs(gridX - p.x) < GRID_SIZE/2 && Math.abs(gridY - p.y) < GRID_SIZE/2) {
-            bestPoint = { x: gridX, y: gridY };
-            snapType = 'grid';
+    validWalls.forEach(w => {
+        xCandidates.push({ x: w.start.x, source: w.start });
+        xCandidates.push({ x: w.end.x, source: w.end });
+        yCandidates.push({ y: w.start.y, source: w.start });
+        yCandidates.push({ y: w.end.y, source: w.end });
+        const mid = { x: (w.start.x + w.end.x)/2, y: (w.start.y + w.end.y)/2 };
+        xCandidates.push({ x: mid.x, source: mid });
+        yCandidates.push({ y: mid.y, source: mid });
+    });
+
+    // Find Best X Alignment
+    let bestXAlign: { x: number, source: Point } | null = null;
+    let minXDist = THRESHOLD;
+    for (const cand of xCandidates) {
+        const d = Math.abs(p.x - cand.x);
+        if (d < minXDist - 0.001) { // Found significantly closer
+            minXDist = d;
+            bestXAlign = cand;
+        } else if (Math.abs(d - minXDist) < 0.001) { // Found equally close
+            // Prefer the source closest to cursor for cleaner guides
+            if (!bestXAlign || dist(cand.source, p) < dist(bestXAlign.source, p)) {
+                bestXAlign = cand;
+            }
         }
     }
 
-    return { point: bestPoint, guides, snapped, snapType };
+    // Find Best Y Alignment
+    let bestYAlign: { y: number, source: Point } | null = null;
+    let minYDist = THRESHOLD;
+    for (const cand of yCandidates) {
+        const d = Math.abs(p.y - cand.y);
+        if (d < minYDist - 0.001) {
+            minYDist = d;
+            bestYAlign = cand;
+        } else if (Math.abs(d - minYDist) < 0.001) {
+            if (!bestYAlign || dist(cand.source, p) < dist(bestYAlign.source, p)) {
+                bestYAlign = cand;
+            }
+        }
+    }
+
+    // Find Closest Edge
+    let bestEdge: { point: Point, wall: Wall } | null = null;
+    let minEdgeDist = THRESHOLD;
+    for (const w of validWalls) {
+        const proj = projectOnSegment(w.start, w.end, p);
+        const d = dist(p, proj);
+        if (d < minEdgeDist) {
+            minEdgeDist = d;
+            bestEdge = { point: proj, wall: w };
+        }
+    }
+
+    // 4. Virtual Corner (Intersection of X and Y Alignments)
+    if (bestXAlign && bestYAlign) {
+        const virtualPt = { x: bestXAlign.x, y: bestYAlign.y };
+        // Check if cursor is close to this virtual point
+        if (dist(p, virtualPt) < THRESHOLD * 1.5) {
+            guides.push({ x1: bestXAlign.source.x, y1: bestXAlign.source.y, x2: virtualPt.x, y2: virtualPt.y, type: 'alignment' });
+            guides.push({ x1: bestYAlign.source.x, y1: bestYAlign.source.y, x2: virtualPt.x, y2: virtualPt.y, type: 'alignment' });
+            return { point: virtualPt, guides, snapped: true, snapType: 'intersection' };
+        }
+    }
+
+    // 5. Intersection of Alignment and Edge
+    if (bestEdge) {
+        const edgePt = bestEdge.point;
+        
+        // Try to snap along the edge to an X alignment
+        if (bestXAlign && Math.abs(edgePt.x - bestXAlign.x) < THRESHOLD) {
+             const w = bestEdge.wall;
+             // Intersect Vertical Line x=bestX with Wall Segment
+             const intPt = intersectLineSegment({p1: {x: bestXAlign.x, y: -10000}, p2: {x: bestXAlign.x, y: 10000}}, w.start, w.end);
+             if (intPt && dist(p, intPt) < THRESHOLD * 2) {
+                 guides.push({ x1: bestXAlign.source.x, y1: bestXAlign.source.y, x2: intPt.x, y2: intPt.y, type: 'alignment' });
+                 return { point: intPt, guides, snapped: true, snapType: 'intersection' };
+             }
+        }
+
+        // Try to snap along the edge to a Y alignment
+        if (bestYAlign && Math.abs(edgePt.y - bestYAlign.y) < THRESHOLD) {
+             const w = bestEdge.wall;
+             // Intersect Horizontal Line y=bestY with Wall Segment
+             const intPt = intersectLineSegment({p1: {x: -10000, y: bestYAlign.y}, p2: {x: 10000, y: bestYAlign.y}}, w.start, w.end);
+             if (intPt && dist(p, intPt) < THRESHOLD * 2) {
+                 guides.push({ x1: bestYAlign.source.x, y1: bestYAlign.source.y, x2: intPt.x, y2: intPt.y, type: 'alignment' });
+                 return { point: intPt, guides, snapped: true, snapType: 'intersection' };
+             }
+        }
+
+        // Just basic Edge Snap
+        return { point: bestEdge.point, guides: [], snapped: true, snapType: 'edge' };
+    }
+
+    // 6. Single Alignment (X or Y)
+    if (bestXAlign) {
+        guides.push({ x1: bestXAlign.source.x, y1: bestXAlign.source.y, x2: bestXAlign.x, y2: p.y, type: 'alignment' });
+        return { point: { x: bestXAlign.x, y: p.y }, guides, snapped: true, snapType: 'alignment' };
+    }
+    if (bestYAlign) {
+        guides.push({ x1: bestYAlign.source.x, y1: bestYAlign.source.y, x2: p.x, y2: bestYAlign.y, type: 'alignment' });
+        return { point: { x: p.x, y: bestYAlign.y }, guides, snapped: true, snapType: 'alignment' };
+    }
+
+    // --- PRIORITY 3: GRID ---
+    const gridX = Math.round(p.x / GRID_SIZE) * GRID_SIZE;
+    const gridY = Math.round(p.y / GRID_SIZE) * GRID_SIZE;
+    if (Math.abs(gridX - p.x) < GRID_SIZE/2 && Math.abs(gridY - p.y) < GRID_SIZE/2) {
+        return { point: { x: gridX, y: gridY }, guides: [], snapped: true, snapType: 'grid' };
+    }
+
+    return { point: p, guides: [], snapped: false };
 };
+
+// Helper: Project point p onto segment AB
+function projectOnSegment(a: Point, b: Point, p: Point): Point {
+    const v = sub(b, a);
+    const l2 = dot(v, v);
+    if (l2 === 0) return a;
+    const t = Math.max(0, Math.min(1, dot(sub(p, a), v) / l2));
+    return add(a, scale(v, t));
+}
+
+// Helper: Intersect infinite line (p1-p2) with segment (a-b)
+function intersectLineSegment(line: {p1: Point, p2: Point}, a: Point, b: Point): Point | null {
+    const det = (line.p2.x - line.p1.x) * (b.y - a.y) - (b.x - a.x) * (line.p2.y - line.p1.y);
+    if (det === 0) return null;
+    // We need intersection point. We can use standard intersect logic but treat line 1 as infinite and line 2 as segment.
+    return intersect(line.p1, line.p2, a, b, true); // true = infinite lines. We check segment bounds manually or trust use case.
+    // Actually, `intersect` with true returns intersection of lines. We need to check if it lies on a-b.
+    // Re-using utils/geometry intersect is better if we have access, but for this self-contained helper:
+    const pt = intersect(line.p1, line.p2, a, b, true);
+    if (!pt) return null;
+    
+    // Check if pt is on segment a-b
+    const dAB = dist(a, b);
+    if (Math.abs(dist(a, pt) + dist(pt, b) - dAB) < 0.01) return pt;
+    return null;
+}

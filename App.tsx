@@ -6,7 +6,7 @@ import { ElevationView } from './components/ElevationView';
 import { SheetPreview } from './components/SheetPreview';
 import { ToolType, PlanData, ViewMode, ProjectMetadata, LayerConfig, AIProvider, AISettings } from './types';
 import { analyzeFloorPlanImage, checkSansCompliance, modifyFloorPlan } from './services/aiService';
-import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck, Settings, FileText, ClipboardList, UserSquare2, Sparkles, Send } from 'lucide-react';
+import { Upload, Loader2, CheckCircle, Save, Camera, Image as ImageIcon, Menu, Layers, FileJson, FolderOpen, Moon, Sun, ShieldCheck, Settings, FileText, ClipboardList, UserSquare2, Sparkles, Send, Trash2 } from 'lucide-react';
 import { SYMBOL_CATALOG } from './components/CanvasEntities';
 import { exportAsPdf, exportAsPng, exportAsSvg } from './components/SheetExporter';
 
@@ -17,7 +17,7 @@ const INITIAL_DATA: PlanData = {
   dimensions: [],
   stairs: [],
   symbols: [],
-  northArrow: { position: { x: 500, y: 300 }, rotation: 0 },
+  northArrow: { position: { x: 900, y: 900 }, rotation: 0 },
   metadata: {
     title: "RESIDENTIAL ADDITION",
     client: "JOHN DOE",
@@ -42,7 +42,8 @@ const INITIAL_LAYERS: LayerConfig = {
   showLabels: true,
   showOpenings: true,
   showStairs: true,
-  showSymbols: true
+  showSymbols: true,
+  showBackground: true
 };
 
 // Safe environment variable access
@@ -173,6 +174,50 @@ export default function App() {
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleBackgroundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+          const result = event.target?.result as string;
+          // Load image to get dimensions
+          const img = new Image();
+          img.onload = () => {
+              // Scale to fit roughly 1000 units wide by default if huge
+              let width = img.width;
+              let height = img.height;
+              if (width > 2000) {
+                  const r = 2000 / width;
+                  width = 2000;
+                  height *= r;
+              }
+              // Center it roughly at 0,0 or just start at 0,0
+              updatePlanData({
+                  ...planData,
+                  background: {
+                      url: result,
+                      x: 0, 
+                      y: 0, 
+                      width: width / 2, // assume high DPI, scale down a bit to match mm units better? 
+                      height: height / 2,
+                      opacity: 0.5
+                  }
+              });
+              setLayers(l => ({ ...l, showBackground: true }));
+              setIsMenuOpen(false);
+          };
+          img.src = result;
+      };
+      reader.readAsDataURL(file);
+  };
+
+  const handleRemoveBackground = () => {
+      const newData = { ...planData };
+      delete newData.background;
+      updatePlanData(newData);
+      setIsMenuOpen(false);
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -344,7 +389,7 @@ export default function App() {
                 </button>
                 
                 {isMenuOpen && (
-                    <div className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-2">
+                    <div className="absolute top-full left-0 mt-2 w-56 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-2 max-h-[80vh] overflow-y-auto">
                         <button 
                           onClick={() => { updatePlanData(INITIAL_DATA); setIsMenuOpen(false); }}
                           className="w-full text-left px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
@@ -361,10 +406,23 @@ export default function App() {
                             <FolderOpen size={16} /> Open Project
                             <input type="file" accept=".json" className="hidden" onChange={handleLoadProject} />
                         </label>
+                        <div className="border-t dark:border-slate-700 my-1"></div>
                         <label className="w-full text-left px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-sm cursor-pointer text-slate-700 dark:text-slate-200">
-                            <ImageIcon size={16} /> Import Image
+                            <ImageIcon size={16} /> Import AI Image
                             <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                         </label>
+                        <label className="w-full text-left px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-sm cursor-pointer text-slate-700 dark:text-slate-200">
+                            <Layers size={16} /> Upload Tracing Plan
+                            <input type="file" accept="image/*" className="hidden" onChange={handleBackgroundUpload} />
+                        </label>
+                        {planData.background && (
+                            <button 
+                                onClick={handleRemoveBackground}
+                                className="w-full text-left px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/30 flex items-center gap-2 text-sm text-red-600 dark:text-red-400"
+                            >
+                                <Trash2 size={16} /> Remove Tracing Plan
+                            </button>
+                        )}
                         <div className="border-t dark:border-slate-700 my-1"></div>
                         <button 
                           onClick={() => { setIsSettingsOpen(true); setIsMenuOpen(false); }}
@@ -425,6 +483,10 @@ export default function App() {
                           <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Visibility</h4>
                           <div className="space-y-2 text-slate-700 dark:text-slate-200">
                               <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-blue-500">
+                                  <input type="checkbox" checked={layers.showBackground} onChange={() => toggleLayer('showBackground')} />
+                                  Tracing Background
+                              </label>
+                              <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-blue-500">
                                   <input type="checkbox" checked={layers.showWalls} onChange={() => toggleLayer('showWalls')} />
                                   Walls
                               </label>
@@ -471,6 +533,7 @@ export default function App() {
                 onExportPdf={() => exportAsPdf(planData)}
                 onCheckCompliance={handleCheckCompliance}
                 onEditMetadata={() => { setMetadataTab('project'); setIsMetadataOpen(true); }}
+                onSave={handleSaveProject}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 canUndo={currentStep > 0}
