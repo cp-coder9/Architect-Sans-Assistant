@@ -317,7 +317,7 @@ const buildCompliancePrompt = (planData: PlanData) => {
     `;
 };
 
-const convertRawDataToPlan = (result: any): Partial<PlanData> => {
+export const convertRawDataToPlan = (result: any): Partial<PlanData> => {
     // 1. Walls
     const walls: Wall[] = (result.walls || []).map((w: any) => ({
       id: crypto.randomUUID(),
@@ -355,14 +355,14 @@ const convertRawDataToPlan = (result: any): Partial<PlanData> => {
         }
 
         if (bestWall) {
-            const defaultWidth = type === 'door' ? 90 : 120; // 900mm or 1200mm
+            const defaultWidth = type === 'door' ? 90 : 120;
             const detectedWidth = item.width && item.width > 10 ? item.width : defaultWidth;
 
             openings.push({
                 id: crypto.randomUUID(),
                 wallId: bestWall.id,
                 t: bestT,
-                width: detectedWidth * 10, // Convert to mm (assuming AI returns relative 0-100 units or pixels)
+                width: detectedWidth,
                 height: 2100,
                 sillHeight: type === 'window' ? 900 : 0,
                 type: type,
