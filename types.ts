@@ -140,10 +140,15 @@ export interface PlanData {
 
 export enum ViewMode {
   PLAN = 'PLAN',
+  ELEVATIONS = 'ELEVATIONS',
   ELEVATION_SOUTH = 'ELEVATION_SOUTH',
+  ELEVATION_NORTH = 'ELEVATION_NORTH',
+  ELEVATION_WEST = 'ELEVATION_WEST',
+  ELEVATION_EAST = 'ELEVATION_EAST',
   SECTION = 'SECTION',
   SCHEDULE = 'SCHEDULE',
-  SHEET = 'SHEET'
+  SHEET = 'SHEET',
+  THREE_D = 'THREE_D'
 }
 
 export interface LayerConfig {

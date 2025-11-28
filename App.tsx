@@ -3,6 +3,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CanvasEditor } from './components/CanvasEditor';
 import { Toolbar } from './components/Toolbar';
 import { ElevationView } from './components/ElevationView';
+import { ElevationGrid } from './components/ElevationGrid';
+import { ThreeDView } from './components/ThreeDView';
 import { SheetPreview } from './components/SheetPreview';
 import { ToolType, PlanData, ViewMode, ProjectMetadata, LayerConfig, AIProvider, AISettings } from './types';
 import { analyzeFloorPlanImage, checkSansCompliance, modifyFloorPlan } from './services/aiService';
@@ -354,7 +356,16 @@ export default function App() {
                     activeWindowType={activeWindowType}
                 />
               );
+          case ViewMode.ELEVATIONS:
+              return (
+                <ElevationGrid
+                  onSwitchView={setViewMode}
+                />
+              );
           case ViewMode.ELEVATION_SOUTH:
+          case ViewMode.ELEVATION_NORTH:
+          case ViewMode.ELEVATION_WEST:
+          case ViewMode.ELEVATION_EAST:
           case ViewMode.SECTION:
           case ViewMode.SCHEDULE:
               return (
@@ -369,6 +380,12 @@ export default function App() {
                   <SheetPreview 
                       data={planData}
                       onUpdate={updatePlanData}
+                  />
+              );
+          case ViewMode.THREE_D:
+              return (
+                  <ThreeDView
+                      data={planData}
                   />
               );
           default:
@@ -452,10 +469,12 @@ export default function App() {
                 value={viewMode} 
                 onChange={(e) => setViewMode(e.target.value as ViewMode)}
                 className="bg-slate-100 dark:bg-slate-800 border-none rounded px-2 py-1 text-xs md:text-sm text-slate-700 dark:text-slate-200 mr-2 cursor-pointer"
+                data-testid="view-switcher"
               >
-                <option value={ViewMode.PLAN}>Plan View</option>
-                <option value={ViewMode.ELEVATION_SOUTH}>Elevation (South)</option>
+                <option value={ViewMode.PLAN}>2D Plan</option>
+                <option value={ViewMode.ELEVATIONS}>Elevations</option>
                 <option value={ViewMode.SECTION}>Section A-A</option>
+                <option value={ViewMode.THREE_D}>3D View</option>
                 <option value={ViewMode.SCHEDULE}>Schedules</option>
                 <option value={ViewMode.SHEET}>Sheet Preview (A1)</option>
               </select>
