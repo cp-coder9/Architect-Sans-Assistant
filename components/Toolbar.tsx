@@ -246,7 +246,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                 <div className="p-3 rounded-2xl shadow-2xl backdrop-blur-xl bg-white/90 dark:bg-slate-900/90 border border-white/20 dark:border-slate-700 flex flex-col gap-3 overflow-hidden">
                     {/* Categories */}
                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 shrink-0">
-                         {['furniture', 'electrical', 'plumbing', 'hvac'].map(cat => (
+                         {['furniture', 'electrical', 'plumbing', 'hvac', 'annotations'].map(cat => (
                             <button 
                                 key={cat}
                                 onClick={() => onSymbolCategorySelect(cat)}
