@@ -67,14 +67,63 @@ export const getSnapPoint = (
         }
     }
 
-    // 3. Perpendicular Snap (Only if drawing from an origin)
+    // 3. Perpendicular, Extension, and Angle Snap (Only if drawing from an origin)
     if (origin) {
+        // Angle Snapping
+        const d = dist(origin, p);
+        if (d > THRESHOLD) {
+            const angle = Math.atan2(p.y - origin.y, p.x - origin.x);
+            const snappedAngle = snapAngle(angle);
+            const snappedPoint = {
+                x: origin.x + d * Math.cos(snappedAngle),
+                y: origin.y + d * Math.sin(snappedAngle)
+            };
+            if (dist(p, snappedPoint) < THRESHOLD) {
+                guides.push({ x1: origin.x, y1: origin.y, x2: snappedPoint.x, y2: snappedPoint.y, type: 'alignment' });
+                return { point: snappedPoint, guides, snapped: true, snapType: 'alignment' };
+            }
+        }
+
+        // Parallel snapping
+        if (origin) {
+            const currentDir = norm(sub(p, origin));
+            for (const w of validWalls) {
+                const wallDir = norm(sub(w.end, w.start));
+                const dotProd = Math.abs(dot(currentDir, wallDir));
+                if (dotProd > 0.995) { // Close to 1 (parallel) or -1 (anti-parallel)
+                    const d = dist(origin, p);
+                    const snappedPoint = add(origin, scale(wallDir, d * Math.sign(dot(currentDir, wallDir))));
+                     if (dist(p, snappedPoint) < THRESHOLD) {
+                        guides.push({ x1: w.start.x, y1: w.start.y, x2: w.end.x, y2: w.end.y, type: 'alignment' });
+                        return { point: snappedPoint, guides, snapped: true, snapType: 'alignment' };
+                    }
+                }
+            }
+        }
+
         for (const w of validWalls) {
+            // Extension snapping
+            const wallDir = norm(sub(w.end, w.start));
+            [w.start, w.end].forEach(ep => {
+                const pToEp = sub(p, ep);
+                const t = dot(pToEp, wallDir);
+                const projectedPoint = add(ep, scale(wallDir, t));
+                const d = dist(p, projectedPoint);
+
+                if (d < THRESHOLD) {
+                    guides.push({ x1: ep.x, y1: ep.y, x2: projectedPoint.x, y2: projectedPoint.y, type: 'extension' });
+                    if (d < bestPointDist) {
+                        bestPointDist = d;
+                        bestPointSnap = { point: projectedPoint, type: 'alignment' };
+                    }
+                }
+            });
+
              const v = sub(w.end, w.start);
              const l2 = dot(v, v);
              if (l2 === 0) continue;
              const t = dot(sub(origin, w.start), v) / l2;
-             // Constrain to segment for now, or allow infinite line? Segment is safer for "Perpendicular" meaning "On Wall".
+             // Perpendicular snap
              if (t >= 0 && t <= 1) { 
                  const perp = add(w.start, scale(v, t));
                  const d = dist(p, perp);
@@ -221,6 +270,12 @@ export const getSnapPoint = (
     }
 
     return { point: p, guides: [], snapped: false };
+};
+
+// Helper: Snap angle to nearest 45 degrees
+const snapAngle = (angle: number): number => {
+    const fortyFive = Math.PI / 4;
+    return Math.round(angle / fortyFive) * fortyFive;
 };
 
 // Helper: Project point p onto segment AB

@@ -466,8 +466,8 @@ export const WallEntity: React.FC<WallEntityProps> = ({ wall, openings = [], sel
     );
 };
 
-interface OpeningEntityProps { op: Opening; wall: Wall; selected: boolean; showLabel: boolean; }
-export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected, showLabel }) => {
+interface OpeningEntityProps { op: Opening; wall: Wall; selected: boolean; showLabel: boolean; children?: React.ReactNode; }
+export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected, showLabel, children }) => {
     const x = wall.start.x + op.t * (wall.end.x - wall.start.x);
     const y = wall.start.y + op.t * (wall.end.y - wall.start.y);
     const angle = Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x) * 180 / Math.PI;
@@ -522,12 +522,7 @@ export const OpeningEntity: React.FC<OpeningEntityProps> = ({ op, wall, selected
                 </text>
             )}
 
-            {selected && !op.locked && (
-                <g>
-                    <ResizeHandle x={-op.width/20} y={0} cursor="cursor-ew-resize" />
-                    <ResizeHandle x={op.width/20} y={0} cursor="cursor-ew-resize" />
-                </g>
-            )}
+            {children}
         </g>
     );
 };

@@ -174,7 +174,7 @@ export interface AISettings {
 
 export interface DragState {
     type: 'wall_endpoint' | 'wall_curve' | 'opening' | 'move_selection' | 'stair' | 'north_arrow' | 'north_arrow_rotate' | 'resize_symbol' | 'resize_opening' | 'resize_background' | 'move_background' | 'pan' | 'new_wall';
-    activeId?: string; 
+    activeId?: string;
     endpointType?: 'start' | 'end';
     handle?: 'tl' | 'tr' | 'bl' | 'br' | 'start' | 'end'; // for resizing
     startPos: Point;
