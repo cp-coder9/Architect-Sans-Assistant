@@ -11,7 +11,7 @@ export const ResizeHandle = ({ x, y, cursor = 'cursor-pointer' }: { x: number, y
 // --- Symbol Catalog Definition ---
 export interface SymbolDef {
     id: string;
-    category: 'furniture' | 'electrical' | 'plumbing' | 'hvac';
+    category: 'furniture' | 'electrical' | 'plumbing' | 'hvac' | 'annotations' | 'doors' | 'windows';
     label: string;
     width: number;
     height: number;
@@ -173,6 +173,37 @@ export const SYMBOL_CATALOG: SymbolDef[] = [
     )},
     { id: 'gas_bottle', category: 'hvac', label: 'Gas Bottle', width: 380, height: 380, render: (w, h) => (
         <g><circle cx="0" cy="0" r={190} fill="none" stroke="currentColor" strokeDasharray="20,10" /><text x="0" y="20" textAnchor="middle" fontSize="100" fontWeight="bold" fill="currentColor">GAS</text></g>
+    )},
+
+    // Annotations
+    { id: 'north_arrow', category: 'annotations', label: 'North Arrow', width: 500, height: 500, render: (w, h) => (
+        <g>
+            <circle cx="0" cy="0" r={h/2} fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d={`M 0 ${-h/2 + 20} L 0 ${h/2 - 20}`} stroke="currentColor" strokeWidth="1" />
+            <path d={`M ${-w/2 + 20} 0 L ${w/2 - 20} 0`} stroke="currentColor" strokeWidth="1" />
+            <path d={`M 0 -25 L 10 0 L 0 25 L -10 0 Z`} fill="currentColor" />
+            <text y="-35" textAnchor="middle" fontWeight="bold" fontSize="12" fill="currentColor">N</text>
+        </g>
+    )},
+    { id: 'scale_bar', category: 'annotations', label: 'Scale Bar', width: 1000, height: 100, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} fill="none" stroke="currentColor" strokeWidth="2" />
+            <text x="0" y="0" textAnchor="middle" alignmentBaseline="middle" fontSize="30" fill="currentColor">1m</text>
+        </g>
+    )},
+
+    // Appliances
+    { id: 'washing_machine', category: 'hvac', label: 'Washing Machine', width: 600, height: 600, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} rx="10" fill="none" stroke="currentColor" />
+            <circle cx="0" cy="0" r={h/3} fill="none" stroke="currentColor" />
+        </g>
+    )},
+    { id: 'dishwasher', category: 'hvac', label: 'Dishwasher', width: 600, height: 600, render: (w, h) => (
+        <g>
+            <rect x={-w/2} y={-h/2} width={w} height={h} rx="10" fill="none" stroke="currentColor" />
+            <path d={`M ${-w/2 + 50} ${-h/2+50} L ${w/2 - 50} ${-h/2+50}`} stroke="currentColor" strokeDasharray="5,5" />
+        </g>
     )}
 ];
 
