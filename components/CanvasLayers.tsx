@@ -67,11 +67,27 @@ export const CanvasLayers: React.FC<CanvasLayersProps> = ({
             {layers.showOpenings && data.openings.map(op => {
                     const wall = data.walls.find(w => w.id === op.wallId);
                     if (!wall) return null;
-                    return <OpeningEntity key={op.id} op={op} wall={wall} selected={selectedId === op.id} showLabel={layers.showLabels} />;
+                    return <OpeningEntity key={op.id} op={op} wall={wall} selected={selectedId === op.id} showLabel={layers.showLabels}>
+                        {selectedId === op.id && !op.locked && (
+                            <g>
+                                <ResizeHandle x={-op.width/20} y={0} cursor="cursor-ew-resize" />
+                                <ResizeHandle x={op.width/20} y={0} cursor="cursor-ew-resize" />
+                            </g>
+                        )}
+                        </OpeningEntity>;
             })}
 
             {layers.showStairs && data.stairs.map(s => <StairEntity key={s.id} stair={s} selected={selectedId === s.id} />)}
-            {layers.showSymbols && data.symbols.map(s => <SymbolEntity key={s.id} symbol={s} selected={selectedId === s.id} />)}
+            {layers.showSymbols && data.symbols.map(s => <SymbolEntity key={s.id} symbol={s} selected={selectedId === s.id}>
+                {selectedId === s.id && !s.locked && (
+                    <>
+                        <ResizeHandle x={s.position.x - (s.width || 100)/2} y={s.position.y - (s.height || 100)/2} cursor="cursor-nwse-resize" />
+                        <ResizeHandle x={s.position.x + (s.width || 100)/2} y={s.position.y - (s.height || 100)/2} cursor="cursor-nesw-resize" />
+                        <ResizeHandle x={s.position.x - (s.width || 100)/2} y={s.position.y + (s.height || 100)/2} cursor="cursor-nesw-resize" />
+                        <ResizeHandle x={s.position.x + (s.width || 100)/2} y={s.position.y + (s.height || 100)/2} cursor="cursor-nwse-resize" />
+                    </>
+                )}
+                </SymbolEntity>)}
             {layers.showLabels && data.labels.map(l => <LabelEntity key={l.id} label={l} selected={selectedId === l.id} />)}
             {layers.showDimensions && data.dimensions.map(d => <DimensionEntity key={d.id} dim={d} selected={selectedId === d.id} />)}
             

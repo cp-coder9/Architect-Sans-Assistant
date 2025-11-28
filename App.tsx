@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasEditor } from './components/CanvasEditor';
+import PropertiesPopup from './components/PropertiesPopup';
 import { Toolbar } from './components/Toolbar';
 import { ElevationView } from './components/ElevationView';
 import { ElevationGrid } from './components/ElevationGrid';
@@ -134,6 +135,7 @@ export default function App() {
   // Dropdowns
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLayersOpen, setIsLayersOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   
   const canvasRef = useRef<any>(null);
 
@@ -354,6 +356,8 @@ export default function App() {
                     activeWallThickness={activeWallThickness}
                     activeDoorType={activeDoorType}
                     activeWindowType={activeWindowType}
+                    selectedId={selectedId}
+                    setSelectedId={setSelectedId}
                 />
               );
           case ViewMode.ELEVATIONS:
@@ -441,12 +445,7 @@ export default function App() {
                             </button>
                         )}
                         <div className="border-t dark:border-slate-700 my-1"></div>
-                        <button 
-                          onClick={() => { setIsSettingsOpen(true); setIsMenuOpen(false); }}
-                          className="w-full text-left px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200"
-                        >
-                            <Settings size={16} /> AI Settings
-                        </button>
+                        <p className="px-4 py-2 text-xs text-slate-400">Settings moved to top bar.</p>
                     </div>
                 )}
             </div>
@@ -487,6 +486,15 @@ export default function App() {
               >
                 {darkMode ? <Sun size={18} /> : <Moon size={18} />}
               </button>
+
+              {/* Settings Button */}
+                <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors"
+                    title="AI Settings"
+                >
+                    <Settings size={18} />
+                </button>
 
               {/* Layers Dropdown */}
               <div className="relative">
@@ -541,6 +549,17 @@ export default function App() {
           
           {/* View Area */}
           {renderContent()}
+
+          {/* Properties Popup */}
+          {selectedId && (
+            <PropertiesPopup
+              selectedId={selectedId}
+              data={planData}
+              onUpdate={(updatedData, addToHistory) => updatePlanData(updatedData, addToHistory)}
+              onClose={() => setSelectedId(null)}
+              setSelectedId={setSelectedId}
+            />
+          )}
 
           {/* Floating Drawing Tools Dock (Only in Plan View) */}
           {viewMode === ViewMode.PLAN && (

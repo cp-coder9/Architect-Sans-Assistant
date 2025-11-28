@@ -16,15 +16,17 @@ interface CanvasEditorProps {
   activeWallThickness: number;
   activeDoorType: string;
   activeWindowType: string;
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
 }
 
 export const CanvasEditor = forwardRef<any, CanvasEditorProps>((props, ref) => {
-    const { data, layers, onUpdate } = props;
+    const { data, layers, onUpdate, selectedId, setSelectedId } = props;
     const containerRef = useRef<HTMLDivElement>(null);
     const [showLegend, setShowLegend] = useState(false);
 
     // Extract logic to custom hook
-    const logic = useCanvasLogic({ ...props, containerRef });
+    const logic = useCanvasLogic({ ...props, containerRef, selectedId, setSelectedId });
 
     useImperativeHandle(ref, () => ({
         resetView: () => {
@@ -90,8 +92,8 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>((props, ref) => {
                 onUpdate={onUpdate}
                 zoom={logic.zoom}
                 setZoom={logic.setZoom}
-                selectedId={logic.selectedId}
-                setSelectedId={logic.setSelectedId}
+                selectedId={selectedId}
+                setSelectedId={setSelectedId}
                 showLegend={showLegend}
                 setShowLegend={setShowLegend}
                 mousePos={logic.mousePos}
