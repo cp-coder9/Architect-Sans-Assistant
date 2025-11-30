@@ -178,19 +178,22 @@ export interface AISettings {
 }
 
 export interface DragState {
-    type: 'wall_endpoint' | 'wall_curve' | 'opening' | 'move_selection' | 'stair' | 'north_arrow' | 'north_arrow_rotate' | 'resize_symbol' | 'resize_opening' | 'resize_background' | 'move_background' | 'pan' | 'new_wall';
+    type: 'wall_endpoint' | 'wall_curve' | 'opening' | 'move_selection' | 'stair' | 'north_arrow' | 'north_arrow_rotate' | 'resize_symbol' | 'resize_opening' | 'resize_background' | 'move_background' | 'pan' | 'new_wall' | 'new_dimension' | 'new_room' | 'move_group' | 'resize_room';
     activeId?: string;
     endpointType?: 'start' | 'end';
-    handle?: 'tl' | 'tr' | 'bl' | 'br' | 'start' | 'end'; // for resizing
+    handle?: 'tl' | 'tr' | 'bl' | 'br' | 'nw' | 'ne' | 'sw' | 'se' | 'start' | 'end'; // Added room handles
     startPos: Point;
-    initialPos?: Point; 
+    endPos?: Point;
+    initialPos?: Point;
     initialSize?: { w: number, h: number };
-    initialRotation?: number; 
+    initialBounds?: { minX: number, minY: number, maxX: number, maxY: number };
+    initialRotation?: number;
     snapshots: {
         walls: { id: string, start: Point, end: Point }[];
         labels: { id: string, position: Point }[];
         stairs: { id: string, position: Point }[];
         dimensions: { id: string, start: Point, end: Point, offset: number }[];
         openings: { id: string, t: number, wallId: string }[];
+        symbols: { id: string, position: Point }[];
     }
 }

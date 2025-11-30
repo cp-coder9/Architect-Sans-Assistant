@@ -19,6 +19,30 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              // React libraries
+              'vendor-react': ['react', 'react-dom', 'react/jsx-runtime'],
+              // Three.js ecosystem
+              'vendor-three': [
+                'three',
+                '@react-three/fiber',
+                '@react-three/drei',
+                'three-stdlib'
+              ],
+              // Utility libraries
+              'vendor-utils': [
+                'fflate',
+                'jspdf',
+                'lucide-react',
+                '@google/genai'
+              ]
+            }
+          }
+        }
       }
     };
 });

@@ -1,9 +1,123 @@
 import React, { useMemo } from 'react';
 import { PlanData, Point } from '../types';
-import { List, ZoomIn, ZoomOut, Lock, Unlock, Trash2, Copy, RotateCw, RefreshCw, X, FlipHorizontal, FlipVertical } from 'lucide-react';
+import { List, ZoomIn, ZoomOut, Lock, Unlock, Trash2, Copy, RotateCw, RefreshCw, X, FlipHorizontal, FlipVertical, Group, Ungroup } from 'lucide-react';
 import { generateLegendData } from './CanvasEntities';
-import { deleteObject, toggleLock } from '../utils/actions';
+import { deleteObject, toggleLock, duplicateObject } from '../utils/actions';
 import { dist } from '../utils/geometry';
+
+// Context Menu Component with Grouping Support
+const ContextMenu: React.FC<{
+    contextMenu: { x: number, y: number, type: 'wall' | 'opening' | 'symbol' | 'background' | 'canvas', targetId?: string } | null;
+    data: PlanData;
+    onUpdate: (data: PlanData, addToHistory?: boolean) => void;
+    onClose: () => void;
+    onDelete: (id: string) => void;
+    onLock: (id: string) => void;
+    onDuplicate: (id: string) => void;
+    onFlip: (axis: 'x' | 'y') => void;
+    onRotate: (deg: number) => void;
+}> = ({ contextMenu, data, onUpdate, onClose, onDelete, onLock, onDuplicate, onFlip, onRotate }) => {
+
+    const menuItems = useMemo(() => {
+        if (!contextMenu) return [];
+
+        const items = [];
+
+        if (contextMenu.type === 'canvas') {
+            items.push({ label: 'Paste (not implemented)', action: () => {}, disabled: true, icon: Copy });
+        } else {
+            // Grouping options for walls
+            const wall = data.walls.find(w => w.id === contextMenu.targetId);
+            if (wall && wall.groupId) {
+                const groupMembers = data.walls.filter(w => w.groupId === wall.groupId);
+                items.push({
+                    label: `Ungroup (${groupMembers.length} walls)`,
+                    action: () => {
+                        const updatedWalls = data.walls.map(w =>
+                            w.id === wall.id ? { ...w, groupId: undefined } : w
+                        );
+                        onUpdate({ ...data, walls: updatedWalls }, true);
+                    },
+                    disabled: false,
+                    icon: Ungroup
+                });
+            } else if (wall) {
+                items.push({ label: 'Group (select more)', action: () => console.log('Multi-select not implemented'), disabled: true, icon: Group });
+            }
+
+            // Standard actions
+            const isLocked = (() => {
+                if (!contextMenu.targetId) return false;
+                const id = contextMenu.targetId;
+                if (id === 'BACKGROUND') return data.background?.locked;
+                const wall = data.walls.find(w => w.id === id);
+                if (wall) return wall.locked;
+                const opening = data.openings.find(o => o.id === id);
+                if (opening) return opening.locked;
+                const symbol = data.symbols.find(s => s.id === id);
+                if (symbol) return symbol.locked;
+                return false;
+            })();
+
+items.push(
+    { label: isLocked ? 'Unlock Position' : 'Lock Position', action: () => onLock(contextMenu.targetId!), disabled: false, icon: isLocked ? Unlock : Lock },
+    { label: 'Duplicate', action: () => onDuplicate(contextMenu.targetId!), disabled: false, icon: Copy },
+    { label: 'Delete', action: () => onDelete(contextMenu.targetId!), disabled: false, icon: Trash2 }
+);
+
+            // Symbol actions
+            if (contextMenu.type === 'symbol') {
+                items.push(
+                    { label: 'Rotate +90°', action: () => onRotate(90), disabled: false, icon: RotateCw },
+                    { label: 'Rotate -90°', action: () => onRotate(-90), disabled: false, icon: RefreshCw }
+                );
+            }
+
+            // Opening actions
+            if (contextMenu.type === 'opening') {
+                items.push(
+                    { label: 'Flip Horizontal', action: () => onFlip('x'), disabled: false, icon: FlipHorizontal },
+                    { label: 'Flip Vertical', action: () => onFlip('y'), disabled: false, icon: FlipVertical }
+                );
+            }
+        }
+
+        return items;
+    }, [contextMenu, data, onUpdate, onLock, onDelete, onFlip, onRotate]);
+
+    if (!contextMenu) return null;
+
+    return (
+        <div
+            className="absolute z-[100] bg-white/95 dark:bg-slate-900/95 backdrop-blur border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl p-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-100"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseLeave={onClose}
+        >
+            <div className="px-2 py-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider border-b dark:border-slate-700 mb-1">
+                {contextMenu.type.toUpperCase()} ACTIONS
+            </div>
+
+            {menuItems.map((item, index) => (
+                <button
+                    key={index}
+                    className={`w-full text-left px-2 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 rounded flex items-center gap-2 transition-colors ${
+                        item.disabled ? 'text-slate-400 cursor-not-allowed' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                    onClick={() => {
+                        if (!item.disabled) {
+                            item.action();
+                            onClose();
+                        }
+                    }}
+                    disabled={item.disabled}
+                >
+                    {React.createElement(item.icon, { size: 14 })}
+                    {item.label}
+                </button>
+            ))}
+        </div>
+    );
+};
 
 interface CanvasOverlaysProps {
     data: PlanData;
@@ -79,56 +193,37 @@ export const CanvasOverlays: React.FC<CanvasOverlaysProps> = ({
         }
     };
 
+    const handleDuplicate = (id: string) => {
+        const updatedData = duplicateObject(data, id);
+        onUpdate(updatedData, true);
+        setContextMenu(null);
+        // Select the new duplicated object if applicable
+        if (id !== 'BACKGROUND') {
+            const walls = data.walls.map((w, idx) => ({ id: `temp-${idx}`, ...w }));
+            const newWalls = (updatedData as any).walls.slice(walls.length);
+            const newOpenings = (updatedData as any).openings.slice(data.openings.length);
+            const newSymbols = (updatedData as any).symbols.slice(data.symbols.length);
+
+            if (newWalls.length > 0) setSelectedId(newWalls[0].id);
+            else if (newOpenings.length > 0) setSelectedId(newOpenings[0].id);
+            else if (newSymbols.length > 0) setSelectedId(newSymbols[0].id);
+        }
+    };
+
     return (
         <>
             {/* Quick Actions Context Menu */}
-            {contextMenu && (
-                <div 
-                    className="absolute z-[100] bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 p-1 min-w-[180px] animate-in fade-in zoom-in-95 duration-100 origin-top-left"
-                    style={{ left: contextMenu.x, top: contextMenu.y }}
-                >
-                    <div className="px-2 py-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider border-b dark:border-slate-700 mb-1">
-                        {contextMenu.type.toUpperCase()} ACTIONS
-                    </div>
-                    
-                    {contextMenu.type !== 'canvas' && (
-                        <>
-                            <button onClick={handleDelete} className="w-full text-left px-2 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded flex items-center gap-2">
-                                <Trash2 size={14} /> Delete
-                            </button>
-                            <button onClick={handleLock} className="w-full text-left px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2">
-                                {isLocked ? <Unlock size={14} /> : <Lock size={14} />} {isLocked ? 'Unlock' : 'Lock'}
-                            </button>
-                        </>
-                    )}
-
-                    {contextMenu.type === 'symbol' && (
-                        <>
-                            <button onClick={() => handleRotate(90)} className="w-full text-left px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2">
-                                <RotateCw size={14} /> Rotate +90°
-                            </button>
-                            <button onClick={() => handleRotate(-90)} className="w-full text-left px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2">
-                                <RefreshCw size={14} /> Rotate -90°
-                            </button>
-                        </>
-                    )}
-
-                    {contextMenu.type === 'opening' && (
-                        <>
-                             <button onClick={() => handleFlip('x')} className="w-full text-left px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2">
-                                <FlipHorizontal size={14} /> Flip Horizontal
-                            </button>
-                            <button onClick={() => handleFlip('y')} className="w-full text-left px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2">
-                                <FlipVertical size={14} /> Flip Vertical
-                            </button>
-                        </>
-                    )}
-
-                    {contextMenu.type === 'canvas' && (
-                         <div className="px-2 py-2 text-xs text-slate-500 italic text-center">No object selected</div>
-                    )}
-                </div>
-            )}
+            <ContextMenu
+                contextMenu={contextMenu}
+                data={data}
+                onUpdate={onUpdate}
+                onClose={() => setContextMenu(null)}
+                onDelete={handleDelete}
+                onLock={handleLock}
+                onDuplicate={handleDuplicate}
+                onFlip={handleFlip}
+                onRotate={handleRotate}
+            />
 
             {/* Legend Toggle Button */}
             <div className="absolute top-4 left-4 z-50">

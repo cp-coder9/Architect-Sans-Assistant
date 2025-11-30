@@ -1,9 +1,10 @@
-import React, { useRef, useState, forwardRef, useImperativeHandle } from 'react';
-import { PlanData, ToolType, LayerConfig } from '../types';
+import React, { useRef, useState, forwardRef, useImperativeHandle, useEffect } from 'react';
+import { PlanData, ToolType, Point, LayerConfig } from '../types';
 import { getWallPath } from './CanvasEntities';
 import { useCanvasLogic } from './CanvasLogic';
 import { CanvasLayers } from './CanvasLayers';
 import { CanvasOverlays } from './CanvasOverlays';
+import { Ruler } from './Ruler';
 
 interface CanvasEditorProps {
   data: PlanData;
@@ -77,13 +78,58 @@ export const CanvasEditor = forwardRef<any, CanvasEditorProps>((props, ref) => {
                     </mask>
                 </defs>
 
-                <CanvasLayers 
+                <CanvasLayers
                     data={data}
                     layers={layers}
                     zoom={logic.zoom}
                     pan={logic.pan}
-                    selectedId={logic.selectedId}
+                    selectedId={selectedId}
                     snapGuides={logic.snapGuides}
+                />
+            </svg>
+
+            {/* Rulers */}
+            <svg
+                className="absolute top-0 left-0 pointer-events-none"
+                width="25"
+                height="25"
+                style={{ background: 'transparent' }}
+            >
+                {/* Corner square */}
+                <rect width="25" height="25" fill="#f8fafc" className="dark:fill-slate-800 stroke-slate-300 dark:stroke-slate-600" strokeWidth="1" />
+            </svg>
+
+            {/* Horizontal ruler (top) */}
+            <svg
+                className="absolute top-0 pointer-events-none"
+                width={`calc(100% - 25px)`}
+                height="25"
+                style={{ left: '25px' }}
+            >
+                <Ruler
+                    width={containerRef.current?.clientWidth || 800}
+                    height={containerRef.current?.clientHeight || 600}
+                    pan={logic.pan}
+                    zoom={logic.zoom}
+                    type="horizontal"
+                    position="top"
+                />
+            </svg>
+
+            {/* Vertical ruler (left) */}
+            <svg
+                className="absolute left-0 pointer-events-none"
+                width="25"
+                height={`calc(100% - 25px)`}
+                style={{ top: '25px' }}
+            >
+                <Ruler
+                    width={containerRef.current?.clientWidth || 800}
+                    height={containerRef.current?.clientHeight || 600}
+                    pan={logic.pan}
+                    zoom={logic.zoom}
+                    type="vertical"
+                    position="left"
                 />
             </svg>
 

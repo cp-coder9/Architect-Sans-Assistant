@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { PlanData, ToolType, Point, Wall, Opening, RoomLabel, SymbolInstance, DragState, LayerConfig } from '../types';
+import { PlanData, ToolType, Point, Wall, Opening, RoomLabel, SymbolInstance, DragState, LayerConfig, StairType, Stair, Dimension } from '../types';
 import { dist, sub, add, scale, dot } from '../utils/geometry';
 import { getSnapPoint, SnapGuide } from '../utils/snapping';
 
@@ -54,9 +54,12 @@ export const useCanvasLogic = ({
     const screenToWorld = (clientX: number, clientY: number) => {
         if (!containerRef.current) return { x: 0, y: 0 };
         const rect = containerRef.current.getBoundingClientRect();
+        // Ensure pan and zoom have valid values
+        const safePan = pan || { x: 0, y: 0 };
+        const safeZoom = zoom || 1;
         return {
-            x: (clientX - rect.left - pan.x) / zoom,
-            y: (clientY - rect.top - pan.y) / zoom
+            x: (clientX - rect.left - safePan.x) / safeZoom,
+            y: (clientY - rect.top - safePan.y) / safeZoom
         };
     };
 
@@ -137,11 +140,13 @@ export const useCanvasLogic = ({
             activeId: newWall.id,
             startPos: startP,
             endpointType: 'end',
-            snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] }
+            snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [], symbols: [] }
         });
     };
 
     const handleSelectMouseDown = (worldPos: Point) => {
+        let selectedGroupId: string | null = null;
+
         if (selectedId === 'BACKGROUND' && data.background && !data.background.locked) {
             const bg = data.background;
             const handleRadius = 15 / zoom;
@@ -167,12 +172,40 @@ export const useCanvasLogic = ({
         const clickedWall = data.walls.find(w => dist(projectOnSegment(w.start, w.end, worldPos), worldPos) < w.thickness/2 + 10/zoom);
         if (clickedWall) {
             setSelectedId(clickedWall.id);
+            selectedGroupId = clickedWall.groupId || null;
+
             if (dist(worldPos, clickedWall.start) < 20/zoom) {
                 setDragState({ type: 'wall_endpoint', activeId: clickedWall.id, endpointType: 'start', startPos: worldPos, snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] } });
             } else if (dist(worldPos, clickedWall.end) < 20/zoom) {
                 setDragState({ type: 'wall_endpoint', activeId: clickedWall.id, endpointType: 'end', startPos: worldPos, snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] } });
             } else {
-                setDragState({ type: 'move_selection', activeId: clickedWall.id, startPos: worldPos, initialPos: clickedWall.start, snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] } });
+                // Group movement - find all objects with same groupId
+                if (selectedGroupId) {
+                    const groupObjects = [
+                        ...data.walls.filter(w => w.groupId === selectedGroupId),
+                        ...data.symbols.filter(s => s.groupId === selectedGroupId),
+                        ...data.labels.filter(l => l.groupId === selectedGroupId)
+                    ].map(obj => obj.id);
+
+                    setDragState({
+                        type: 'move_group',
+                        activeId: selectedGroupId,
+                        startPos: worldPos,
+                        snapshots: {
+                            walls: data.walls.filter(w => w.groupId === selectedGroupId).map(w => ({ id: w.id, start: w.start, end: w.end })),
+                            labels: data.labels.filter(l => l.groupId === selectedGroupId).map(l => ({ id: l.id, position: l.position })),
+                            stairs: [],
+                            dimensions: [],
+                            openings: data.openings.filter(o => {
+                                const wall = data.walls.find(w => w.id === o.wallId);
+                                return wall?.groupId === selectedGroupId;
+                            }).map(o => ({ id: o.id, t: o.t, wallId: o.wallId })),
+                            symbols: data.symbols.filter(s => s.groupId === selectedGroupId).map(s => ({ id: s.id, position: s.position }))
+                        }
+                    });
+                } else {
+                    setDragState({ type: 'move_selection', activeId: clickedWall.id, startPos: worldPos, initialPos: clickedWall.start, snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] } });
+                }
             }
             return;
         }
@@ -220,18 +253,44 @@ export const useCanvasLogic = ({
     };
 
     const handleOpeningMouseDown = (worldPos: Point) => {
-        const clickedOpening = data.openings.find(o => dist(o.position, worldPos) < 20/zoom);
+        // Find opening by checking if worldPos is close to the opening's position on its wall
+        const clickedOpening = data.openings.find(o => {
+            const wall = data.walls.find(w => w.id === o.wallId);
+            if (!wall) return false;
+            
+            // Calculate opening position along the wall
+            const wallLength = dist(wall.start, wall.end);
+            if (wallLength === 0) return false;
+            
+            const openingPos = {
+                x: wall.start.x + (wall.end.x - wall.start.x) * o.t,
+                y: wall.start.y + (wall.end.y - wall.start.y) * o.t
+            };
+            
+            return dist(openingPos, worldPos) < 20/zoom;
+        });
+        
         if (clickedOpening) {
             setSelectedId(clickedOpening.id);
             if (!clickedOpening.locked) {
                 const handleRadius = 15 / zoom;
-                let handle: DragState['handle'] | null = null;
-                if (dist(worldPos, {x: clickedOpening.position.x - clickedOpening.width/20, y: clickedOpening.position.y}) < handleRadius) handle = 'start';
-                else if (dist(worldPos, {x: clickedOpening.position.x + clickedOpening.width/20, y: clickedOpening.position.y}) < handleRadius) handle = 'end';
+                const wall = data.walls.find(w => w.id === clickedOpening.wallId);
+                if (wall) {
+                    // Calculate opening position along the wall
+                    const wallLength = dist(wall.start, wall.end);
+                    const openingPos = {
+                        x: wall.start.x + (wall.end.x - wall.start.x) * clickedOpening.t,
+                        y: wall.start.y + (wall.end.y - wall.start.y) * clickedOpening.t
+                    };
+                    
+                    let handle: DragState['handle'] | null = null;
+                    if (dist(worldPos, {x: openingPos.x - clickedOpening.width/20, y: openingPos.y}) < handleRadius) handle = 'start';
+                    else if (dist(worldPos, {x: openingPos.x + clickedOpening.width/20, y: openingPos.y}) < handleRadius) handle = 'end';
 
-                if (handle) {
-                    setDragState({ type: 'resize_opening', activeId: clickedOpening.id, handle, startPos: worldPos, initialSize: { w: clickedOpening.width, h: clickedOpening.height }, snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] } });
-                    return;
+                    if (handle) {
+                        setDragState({ type: 'resize_opening', activeId: clickedOpening.id, handle, startPos: worldPos, initialSize: { w: clickedOpening.width, h: clickedOpening.height }, snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] } });
+                        return;
+                    }
                 }
             }
             return;
@@ -292,6 +351,77 @@ export const useCanvasLogic = ({
         setSelectedId(newLbl.id);
     };
 
+    const handleSquareRoomMouseDown = (worldPos: Point) => {
+        // Start drawing a room - first corner
+        setDragState({
+            type: 'new_room',
+            startPos: worldPos,
+            endPos: worldPos,
+            snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] }
+        });
+    };
+
+    const handleArchWallMouseDown = (worldPos: Point) => {
+        const snap = getSnapPoint(worldPos, zoom, data.walls, data.openings);
+        const startP = snap.snapped ? snap.point : worldPos;
+        const newWall: Wall = {
+            id: crypto.randomUUID(),
+            start: startP,
+            end: startP,
+            thickness: activeWallThickness || 22,
+            height: 2700,
+            curvature: 500 // Default curvature for arch walls
+        };
+        onUpdate({ ...data, walls: [...data.walls, newWall] }, true);
+        setSelectedId(newWall.id);
+        setDragState({
+            type: 'new_wall',
+            activeId: newWall.id,
+            startPos: startP,
+            endpointType: 'end',
+            snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] }
+        });
+    };
+
+    const handleDimensionMouseDown = (worldPos: Point) => {
+        const newDimension = {
+            id: crypto.randomUUID(),
+            start: worldPos,
+            end: worldPos,
+            offset: 100
+        };
+        onUpdate({ ...data, dimensions: [...data.dimensions, newDimension] }, true);
+        setSelectedId(newDimension.id);
+        setDragState({
+            type: 'new_dimension',
+            activeId: newDimension.id,
+            startPos: worldPos,
+            snapshots: { walls: [], labels: [], stairs: [], dimensions: [], openings: [] }
+        });
+    };
+
+    const handleStairMouseDown = (worldPos: Point) => {
+        const newStair: Stair = {
+            id: crypto.randomUUID(),
+            position: worldPos,
+            width: 1000,
+            treadDepth: 250,
+            riserHeight: 170,
+            count: 12,
+            flight1Count: 12,
+            rotation: 0,
+            type: StairType.STRAIGHT,
+            label: `S${data.stairs.length + 1}`
+        };
+        onUpdate({ ...data, stairs: [...data.stairs, newStair] }, true);
+        setSelectedId(newStair.id);
+    };
+
+    const handleCalibrateMouseDown = (worldPos: Point) => {
+        // Calibration tool - for now just add a dimension line for scaling
+        handleDimensionMouseDown(worldPos);
+    };
+
     const handleMouseDown = (e: React.MouseEvent) => {
         setContextMenu(null);
         if (tool !== ToolType.PAN) e.preventDefault();
@@ -311,6 +441,9 @@ export const useCanvasLogic = ({
             case ToolType.WALL:
                 handleWallMouseDown(worldPos);
                 break;
+            case ToolType.ARCH_WALL:
+                handleArchWallMouseDown(worldPos);
+                break;
             case ToolType.SELECT:
                 handleSelectMouseDown(worldPos);
                 break;
@@ -324,6 +457,18 @@ export const useCanvasLogic = ({
             case ToolType.ROOM_LABEL:
                 handleRoomLabelMouseDown(worldPos);
                 break;
+            case ToolType.SQUARE_ROOM:
+                handleSquareRoomMouseDown(worldPos);
+                break;
+            case ToolType.DIMENSION:
+                handleDimensionMouseDown(worldPos);
+                break;
+            case ToolType.STAIR:
+                handleStairMouseDown(worldPos);
+                break;
+            case ToolType.CALIBRATE:
+                handleCalibrateMouseDown(worldPos);
+                break;
         }
     };
 
@@ -332,6 +477,11 @@ export const useCanvasLogic = ({
         setMousePos(worldPos);
 
         if (dragState) {
+            if (dragState.type === 'new_room' && dragState.startPos) {
+                // Update room preview end position
+                setDragState({...dragState, endPos: worldPos});
+                return;
+            }
             if (dragState.type === 'pan') {
                 const dx = e.clientX - dragState.startPos.x;
                 const dy = e.clientY - dragState.startPos.y;
@@ -435,6 +585,65 @@ export const useCanvasLogic = ({
 
                 onUpdate({ ...data, openings: data.openings.map(o => o.id === dragState.activeId ? { ...o, width: w } : o)}, false);
             }
+
+            if (dragState.type === 'move_group' && dragState.activeId && dragState.snapshots) {
+                const dx = worldPos.x - dragState.startPos.x;
+                const dy = worldPos.y - dragState.startPos.y;
+
+                // Move all group objects together
+                const groupId = dragState.activeId;
+
+                let updatedData = { ...data };
+
+                // Move walls in the group
+                updatedData.walls = updatedData.walls.map(w => {
+                    const snapshot = dragState.snapshots!.walls.find(s => s.id === w.id);
+                    if (snapshot && w.groupId === groupId) {
+                        return {
+                            ...w,
+                            start: { x: snapshot.start.x + dx, y: snapshot.start.y + dy },
+                            end: { x: snapshot.end.x + dx, y: snapshot.end.y + dy }
+                        };
+                    }
+                    return w;
+                });
+
+                // Move labels in the group
+                updatedData.labels = updatedData.labels.map(l => {
+                    const snapshot = dragState.snapshots!.labels.find(s => s.id === l.id);
+                    if (snapshot && l.groupId === groupId) {
+                        return {
+                            ...l,
+                            position: { x: snapshot.position.x + dx, y: snapshot.position.y + dy }
+                        };
+                    }
+                    return l;
+                });
+
+                // Move symbols in the group
+                updatedData.symbols = updatedData.symbols.map(s => {
+                    const snapshot = dragState.snapshots!.symbols?.find(sn => sn.id === s.id);
+                    if (snapshot && s.groupId === groupId) {
+                        return {
+                            ...s,
+                            position: { x: snapshot.position.x + dx, y: snapshot.position.y + dy }
+                        };
+                    }
+                    return s;
+                });
+
+                // Update openings attached to walls in the group
+                updatedData.openings = updatedData.openings.map(o => {
+                    const snapshot = dragState.snapshots!.openings.find(s => s.id === o.id);
+                    if (snapshot && data.walls.find(w => w.id === o.wallId)?.groupId === groupId) {
+                        // Openings move with their walls, so their t-value stays the same
+                        return o;
+                    }
+                    return o;
+                });
+
+                onUpdate(updatedData, false);
+            }
         } else {
             if (tool === ToolType.WALL) {
                 const snap = getSnapPoint(worldPos, zoom, data.walls, data.openings);
@@ -446,6 +655,60 @@ export const useCanvasLogic = ({
     };
 
     const handleMouseUp = () => {
+        if (dragState && dragState.type === 'new_room' && dragState.startPos && dragState.endPos) {
+            // Create the room walls
+            const roomId = crypto.randomUUID();
+            const width = Math.abs(dragState.endPos.x - dragState.startPos.x);
+            const height = Math.abs(dragState.endPos.y - dragState.startPos.y);
+            const minX = Math.min(dragState.startPos.x, dragState.endPos.x);
+            const minY = Math.min(dragState.startPos.y, dragState.endPos.y);
+
+            if (width > 50 && height > 50) { // Minimum room size
+                const walls: Wall[] = [
+                    {
+                        id: crypto.randomUUID(),
+                        start: { x: minX, y: minY },
+                        end: { x: minX + width, y: minY },
+                        thickness: activeWallThickness || 22,
+                        height: 2700,
+                        groupId: roomId
+                    },
+                    {
+                        id: crypto.randomUUID(),
+                        start: { x: minX + width, y: minY },
+                        end: { x: minX + width, y: minY + height },
+                        thickness: activeWallThickness || 22,
+                        height: 2700,
+                        groupId: roomId
+                    },
+                    {
+                        id: crypto.randomUUID(),
+                        start: { x: minX + width, y: minY + height },
+                        end: { x: minX, y: minY + height },
+                        thickness: activeWallThickness || 22,
+                        height: 2700,
+                        groupId: roomId
+                    },
+                    {
+                        id: crypto.randomUUID(),
+                        start: { x: minX, y: minY + height },
+                        end: { x: minX, y: minY },
+                        thickness: activeWallThickness || 22,
+                        height: 2700,
+                        groupId: roomId
+                    }
+                ];
+
+                onUpdate({
+                    ...data,
+                    walls: [...data.walls, ...walls]
+                }, true);
+
+                // Select the group (the room) by selecting one wall (they share groupId)
+                setSelectedId(walls[0].id);
+            }
+        }
+
         setDragState(null);
         setSnapGuides([]);
     };
